@@ -682,7 +682,8 @@ namespace RT64 {
                     drawParams.postBlendNoise = workloadConfig.postBlendNoise;
                     drawParams.postBlendNoiseNegative = workloadConfig.postBlendNoiseNegative;
                     drawParams.maxGameCall = std::min(gameCallCountMax - gameCallCursor, fbPair.gameCallCount);
-                    drawParams.jitterPixels = jitterPixels;
+                    // With DLSS on, only the pair DLSS runs on is jittered; anything else with 3D content would just shimmer.
+                    drawParams.jitterPixels = (workloadConfig.upscalerActive && (int32_t(f) != motionVectorFbPairIndex)) ? hlslpp::float2(0.0f, 0.0f) : jitterPixels;
                     drawParams.motionVectors = nullptr;
                     drawParams.motionVectorsDebugView = false;
                     if ((int32_t(f) == motionVectorFbPairIndex) && (fbStorage.colorTarget != nullptr) && (fbStorage.depthTarget != nullptr)) {
@@ -729,6 +730,23 @@ namespace RT64 {
                             drawParams.dlss = ext.dlss;
                             drawParams.dlssOutput = dlssOutput.texture.get();
                             drawParams.dlssMode = DLSSStreamline::modeFromConfiguration(workloadConfig.upscaler);
+
+                            // The scaling modes render the 3D content at the size DLSS asks for; DLAA keeps the full size.
+                            const float displayWidthF = float(nativeColorWidth) * fixedResScale.x;
+                            const uint32_t displayWidth = uint32_t(displayWidthF);
+                            const uint32_t displayHeight = targetHeight;
+                            uint32_t renderWidth = 0;
+                            uint32_t renderHeight = 0;
+                            if (ext.dlss->queryRenderSize(drawParams.dlssMode, displayWidth, displayHeight, renderWidth, renderHeight)) {
+                                drawParams.dlssRenderWidth = renderWidth;
+                                drawParams.dlssRenderHeight = renderHeight;
+                                if (renderHeight < displayHeight) {
+                                    // The jitter sequence gets longer with the upscaling ratio, as DLSS recommends.
+                                    const uint32_t phaseCount = HaltonJitterPhaseCount(renderHeight, displayHeight);
+                                    jitterPixels = HaltonJitter(int(framebufferRenderer->frameParams.frameCount), int(phaseCount));
+                                    drawParams.jitterPixels = jitterPixels;
+                                }
+                            }
                             // A workload frozen by the debugger re-renders the same frame with zero motion, so its history stays valid.
                             const bool motionReset = !workload.paused && (mvState.reset || cameraCut);
                             drawParams.dlssReset = outputRecreated || motionReset;

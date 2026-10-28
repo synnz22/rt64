@@ -94,6 +94,9 @@ namespace RT64 {
         bool isSupported() const;
         const Status &getStatus() const;
 
+        // Render size DLSS wants for a mode and output size (DLAA returns the output size). Cached per mode and size.
+        bool queryRenderSize(Mode mode, uint32_t outputWidth, uint32_t outputHeight, uint32_t &renderWidth, uint32_t &renderHeight);
+
         // Records DLSS into the command list. False (output untouched) when Streamline refused; the reason goes to the console.
         bool evaluate(const EvaluateParams &p);
 

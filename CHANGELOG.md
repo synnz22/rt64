@@ -18,6 +18,9 @@ starts at 0.1.0.
   the previous frame), when the previous displayed frame did not go through DLSS (pause menu, scene without 3D content),
   and when the mode or output size changes.
 - `DynamicLibraries::moduleDirectory()` helper (the executable's directory).
+- DLSS scaling modes (Quality / Balanced / Performance): the 3D content of the frame renders at the size DLSS asks for
+  (about 67% / 58% / 50% per axis) into the top left region of the same targets and DLSS upscales it to the full size;
+  the HUD and 2D content drawn afterwards stay at full size. The jitter sequence length follows the upscaling ratio.
 
 ### Changed
 - Nothing in the output when the upscaler is `None`: the native renderer and the high resolution renderer are untouched
@@ -25,8 +28,9 @@ starts at 0.1.0.
   how to resolve that (Zelda64Recomp turns MSAA off when DLSS is selected).
 
 ### Known limitations
-- The scaling modes (Quality / Balanced / Performance) are accepted by the setting but render at full resolution like DLAA
-  until the lower internal render size is implemented (next checkpoint).
+- With a scaling mode, the depth buffer holds the 3D content at the render size (top left region) after the DLSS pass; 2D
+  content drawn afterwards does not depth test in Majora's Mask, but a game that does would need the depth upsampled first.
+- 2D content drawn before the 3D scene (backgrounds, sky rectangles) renders at the DLSS render size and is upscaled with it.
 - Vulkan: DLSS reports itself unavailable (needs a plume change to inject Streamline's device extensions and queues).
 
 ## [0.3.0] - 2026-10-28

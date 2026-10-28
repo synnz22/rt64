@@ -473,8 +473,10 @@ namespace RT64 {
         const RenderPipeline *previousPipeline = nullptr;
         RenderRect previousScissor;
         interop::RasterParams rasterParams;
-        RenderDescriptorSet *descRealFbSet = framebuffer.descRealFbSet->get();
-        RenderDescriptorSet *descDummyFbSet = framebuffer.descDummyFbSet->get();
+        // Scenes before the DLSS marker use the low resolution viewport and parameters.
+        const RenderViewport &sceneViewport = rasterScene.lowRes ? framebuffer.viewportLow : framebuffer.viewport;
+        RenderDescriptorSet *descRealFbSet = (rasterScene.lowRes ? framebuffer.descRealFbSetLow : framebuffer.descRealFbSet)->get();
+        RenderDescriptorSet *descDummyFbSet = (rasterScene.lowRes ? framebuffer.descDummyFbSetLow : framebuffer.descDummyFbSet)->get();
 
         auto switchToGraphicsPipeline = [&]() {
             previousCallType = InstanceDrawCall::Type::Unknown;
@@ -486,7 +488,7 @@ namespace RT64 {
             worker->commandList->setGraphicsDescriptorSet(descTextureSet->get(), 1);
             worker->commandList->setGraphicsDescriptorSet(descTextureSet->get(), 2);
             worker->commandList->setGraphicsDescriptorSet(depthState ? descRealFbSet : descDummyFbSet, 3);
-            worker->commandList->setViewports(framebuffer.viewport);
+            worker->commandList->setViewports(sceneViewport);
         };
 
         auto switchToDepthRead = [&]() {
@@ -1331,6 +1333,9 @@ namespace RT64 {
         assert(motionVectors != nullptr);
         assert(fbStorage->depthTarget != nullptr);
 
+        // With a DLSS scaling mode the 3D content lives in the low resolution region, and so do its motion vectors.
+        const RenderViewport &mvViewport = framebuffer.lowResActive ? framebuffer.viewportLow : framebuffer.viewport;
+
         // Draw the motion vectors of the 3D geometry that wrote depth, using the depth buffer as read-only with an EQUAL test.
         RenderTextureBarrier startBarriers[] = {
             RenderTextureBarrier(motionVectors->texture.get(), RenderTextureLayout::COLOR_WRITE),
@@ -1342,12 +1347,12 @@ namespace RT64 {
         worker->commandList->clearColor(0, RenderColor(0.0f, 0.0f, 0.0f, 0.0f));
         worker->commandList->setGraphicsPipelineLayout(shaderLibrary->motionVectors.pipelineLayout.get());
         worker->commandList->setPipeline(shaderLibrary->motionVectors.pipeline.get());
-        worker->commandList->setViewports(framebuffer.viewport);
+        worker->commandList->setViewports(mvViewport);
         worker->commandList->setVertexBuffers(0, motionVectorVertexViews.data(), uint32_t(motionVectorVertexViews.size()), motionVectorInputSlots.data());
 
         interop::MotionVectorParams params;
         params.resolution = framebuffer.fbResolution;
-        params.viewportSize = { framebuffer.viewport.width, framebuffer.viewport.height };
+        params.viewportSize = { mvViewport.width, mvViewport.height };
 
         bool indexBufferSet = false;
         bool previousVertexTestZ = false;
@@ -1392,8 +1397,8 @@ namespace RT64 {
             worker->commandList->setPipeline(shaderLibrary->motionVectorDebug.pipeline.get());
             worker->commandList->setGraphicsDescriptorSet(motionVectors->debugDescSet->get(), 0);
             worker->commandList->setGraphicsPushConstants(0, &params);
-            worker->commandList->setViewports(framebuffer.viewport);
-            worker->commandList->setScissors(RenderRect(0, 0, int32_t(framebuffer.viewport.width), int32_t(framebuffer.viewport.height)));
+            worker->commandList->setViewports(mvViewport);
+            worker->commandList->setScissors(RenderRect(0, 0, int32_t(mvViewport.width), int32_t(mvViewport.height)));
             worker->commandList->drawInstanced(3, 1, 0, 0);
         }
 
@@ -1462,7 +1467,10 @@ namespace RT64 {
 
         const uint32_t width = uint32_t(framebuffer.viewport.width);
         const uint32_t height = uint32_t(framebuffer.viewport.height);
-        if ((width == 0) || (height == 0)) {
+        const RenderViewport &renderViewport = framebuffer.lowResActive ? framebuffer.viewportLow : framebuffer.viewport;
+        const uint32_t renderWidth = uint32_t(renderViewport.width);
+        const uint32_t renderHeight = uint32_t(renderViewport.height);
+        if ((width == 0) || (height == 0) || (renderWidth == 0) || (renderHeight == 0)) {
             return;
         }
 
@@ -1484,8 +1492,8 @@ namespace RT64 {
         evalParams.motionVectors = framebuffer.motionVectors->texture.get();
         evalParams.outputColor = framebuffer.dlssOutput;
         evalParams.mode = framebuffer.dlssMode;
-        evalParams.renderWidth = width;
-        evalParams.renderHeight = height;
+        evalParams.renderWidth = renderWidth;
+        evalParams.renderHeight = renderHeight;
         evalParams.outputWidth = width;
         evalParams.outputHeight = height;
         evalParams.viewToClip = framebuffer.dlssViewToClip;
@@ -1542,6 +1550,9 @@ namespace RT64 {
             framebufferVector.back().paramsBuffer = p.worker->device->createBuffer(RenderBufferDesc::UploadBuffer(256, RenderBufferFlag::CONSTANT));
             framebufferVector.back().descRealFbSet = std::make_unique<FramebufferRendererDescriptorFramebufferSet>(p.worker->device);
             framebufferVector.back().descDummyFbSet = std::make_unique<FramebufferRendererDescriptorFramebufferSet>(p.worker->device);
+            framebufferVector.back().paramsBufferLow = p.worker->device->createBuffer(RenderBufferDesc::UploadBuffer(256, RenderBufferFlag::CONSTANT));
+            framebufferVector.back().descRealFbSetLow = std::make_unique<FramebufferRendererDescriptorFramebufferSet>(p.worker->device);
+            framebufferVector.back().descDummyFbSetLow = std::make_unique<FramebufferRendererDescriptorFramebufferSet>(p.worker->device);
         }
 
         Framebuffer &framebuffer = framebufferVector[framebufferCount - 1];
@@ -1672,11 +1683,7 @@ namespace RT64 {
         framebuffer.dlssMode = p.dlssMode;
         framebuffer.dlssReset = p.dlssReset;
         
-        const interop::float2 halfViewportSize = { framebuffer.viewport.width / 2.0f, framebuffer.viewport.height / 2.0f };
-        const interop::float2 halfPixelOffset = { 1.0f / framebuffer.viewport.width, -1.0f / framebuffer.viewport.height };
         const bool jitterActive = p.highRes && ((p.jitterPixels.x != 0.0f) || (p.jitterPixels.y != 0.0f));
-        const interop::float2 jitterNDC = { (2.0f * p.jitterPixels.x) / framebuffer.viewport.width, (-2.0f * p.jitterPixels.y) / framebuffer.viewport.height };
-        const float middleViewport = (wideWidth / 2.0f) - (originalWidth / 2.0f);
         const float extOriginPercentage = p.extAspectPercentage;
         uint32_t vertexTestZFaceIndicesStart = 0;
         int32_t vertexTestZCallIndex = -1;
@@ -1685,12 +1692,75 @@ namespace RT64 {
         const int32_t motionVectorProjIndex = (framebuffer.motionVectors != nullptr) ? findMotionVectorProjection(fbPair) : -1;
         const int32_t mainProjIndex = (framebuffer.dlss != nullptr) ? findMainPerspectiveProjection(fbPair) : -1;
 
+        // DLSS scaling modes: everything up to the marker projection renders into the top left region of the same targets at
+        // the DLSS render size, DLSS then fills the full region, and the rest of the pair (HUD, 2D) continues at full size.
+        framebuffer.lowResActive = false;
+        framebuffer.viewportLow = framebuffer.viewport;
+        hlslpp::float2 lowResRatio = hlslpp::float2(1.0f, 1.0f);
+        if ((framebuffer.dlss != nullptr) && (motionVectorProjIndex >= 0) && (p.dlssRenderWidth > 0) && (p.dlssRenderHeight > 0)) {
+            const float renderWidth = float(p.dlssRenderWidth);
+            const float renderHeight = float(p.dlssRenderHeight);
+            if ((renderWidth < wideWidth) || (renderHeight < commonHeight)) {
+                framebuffer.lowResActive = true;
+                framebuffer.viewportLow = RenderViewport(0.0f, 0.0f, renderWidth, renderHeight);
+                lowResRatio = hlslpp::float2(renderWidth / wideWidth, renderHeight / commonHeight);
+            }
+        }
+
+        // Second set of framebuffer parameters for the low resolution scenes (the pixel shader's pixel-space math).
+        interop::FramebufferParams fbParamsLow = fbParams;
+        fbParamsLow.resolutionScale = p.resolutionScale * lowResRatio;
+        fbParamsLow.horizontalMisalignment = p.horizontalMisalignment * float(lowResRatio.x);
+        void *paramLowBufferBytes = framebuffer.paramsBufferLow->map();
+        memcpy(paramLowBufferBytes, &fbParamsLow, sizeof(interop::FramebufferParams));
+        framebuffer.paramsBufferLow->unmap();
+        framebuffer.descRealFbSetLow->setBuffer(framebuffer.descRealFbSetLow->FbParams, framebuffer.paramsBufferLow.get(), sizeof(interop::FramebufferParams));
+        framebuffer.descRealFbSetLow->setTexture(framebuffer.descRealFbSetLow->gBackgroundColor, backgroundColorTexture, RenderTextureLayout::SHADER_READ, backgroundColorTextureView);
+        framebuffer.descRealFbSetLow->setTexture(framebuffer.descRealFbSetLow->gBackgroundDepth, p.fbStorage->depthTarget->texture.get(), RenderTextureLayout::DEPTH_READ, p.fbStorage->depthTarget->textureView.get());
+        framebuffer.descDummyFbSetLow->setBuffer(framebuffer.descDummyFbSetLow->FbParams, framebuffer.paramsBufferLow.get(), sizeof(interop::FramebufferParams));
+        framebuffer.descDummyFbSetLow->setTexture(framebuffer.descDummyFbSetLow->gBackgroundColor, backgroundColorTexture, RenderTextureLayout::SHADER_READ, backgroundColorTextureView);
+        framebuffer.descDummyFbSetLow->setTexture(framebuffer.descDummyFbSetLow->gBackgroundDepth, dummyDepthTarget.get(), RenderTextureLayout::DEPTH_READ, dummyDepthTargetView.get());
+
+        // The values every draw depends on, once for the full size and once for the DLSS render size.
+        struct ScaleSet {
+            hlslpp::float2 resScale;
+            RenderViewport viewport;
+            float wideWidth;
+            float originalWidth;
+            float middleViewport;
+            float horizontalMisalignment;
+            interop::float2 halfViewportSize;
+            interop::float2 halfPixelOffset;
+            interop::float2 jitterNDC;
+        };
+
+        auto makeScaleSet = [&](hlslpp::float2 resScale, const RenderViewport &viewport, float horizontalMisalignment) {
+            ScaleSet s;
+            s.resScale = resScale;
+            s.viewport = viewport;
+            s.wideWidth = p.fbWidth * resScale.x;
+            s.originalWidth = p.fbWidth * resScale.y;
+            s.middleViewport = (s.wideWidth / 2.0f) - (s.originalWidth / 2.0f);
+            s.horizontalMisalignment = horizontalMisalignment;
+            s.halfViewportSize = { viewport.width / 2.0f, viewport.height / 2.0f };
+            s.halfPixelOffset = { 1.0f / viewport.width, -1.0f / viewport.height };
+            s.jitterNDC = { (2.0f * p.jitterPixels.x) / viewport.width, (-2.0f * p.jitterPixels.y) / viewport.height };
+            return s;
+        };
+
+        const ScaleSet fullScale = makeScaleSet(p.resolutionScale, framebuffer.viewport, p.horizontalMisalignment);
+        const ScaleSet lowScale = makeScaleSet(p.resolutionScale * lowResRatio, framebuffer.viewportLow, p.horizontalMisalignment * float(lowResRatio.x));
+
         RenderViewport viewportClip;
         for (uint32_t pr = 0; (pr < fbPair.projectionCount) && (globalCallIndex < p.maxGameCall); pr++) {
             const Projection &proj = fbPair.projections[pr];
             if (proj.scissorRect.isNull()) {
                 continue;
             }
+
+            // Everything up to and including the DLSS marker projection renders at the DLSS render size.
+            const bool lowRes = framebuffer.lowResActive && (int32_t(pr) <= motionVectorProjIndex);
+            const ScaleSet &sc = lowRes ? lowScale : fullScale;
 
 #       if RT_ENABLED
             // TODO: Move heuristics of RT proj elsewhere?
@@ -1715,7 +1785,7 @@ namespace RT64 {
             
             auto &triangles = instanceDrawCall.triangles;
             triangles.screenScale = { 1.0f, 1.0f };
-            triangles.screenOffset = halfPixelOffset;
+            triangles.screenOffset = sc.halfPixelOffset;
 
             float projInvRatioScale = 1.0f / aspectRatioScale;
             const int16_t *viewportClipRatios = &drawData.viewportClipRatios[proj.transformsIndex * 4];
@@ -1731,22 +1801,22 @@ namespace RT64 {
                     projInvRatioScale = 1.0f;
                 }
                 else {
-                    triangles.screenScale.x = originalWidth / wideWidth;
+                    triangles.screenScale.x = sc.originalWidth / sc.wideWidth;
 
                     if (viewportOrigin < G_EX_ORIGIN_NONE) {
-                        const float centerOffset = ((middleViewport * viewportOrigin) / G_EX_ORIGIN_CENTER) * extOriginPercentage + middleViewport * (1.0f - extOriginPercentage);
-                        triangles.screenOffset.x = halfPixelOffset.x + ((centerOffset - middleViewport) / halfViewportSize.x);
+                        const float centerOffset = ((sc.middleViewport * viewportOrigin) / G_EX_ORIGIN_CENTER) * extOriginPercentage + sc.middleViewport * (1.0f - extOriginPercentage);
+                        triangles.screenOffset.x = sc.halfPixelOffset.x + ((centerOffset - sc.middleViewport) / sc.halfViewportSize.x);
                     }
                 }
 
-                viewportClip = convertViewportRect(viewport.rect(viewportClipRatios), p.resolutionScale, p.fbWidth, projInvRatioScale, extOriginPercentage, 0.0f, viewportOrigin, viewportOrigin);
+                viewportClip = convertViewportRect(viewport.rect(viewportClipRatios), sc.resScale, p.fbWidth, projInvRatioScale, extOriginPercentage, 0.0f, viewportOrigin, viewportOrigin);
             }
 
             // Sub-pixel jitter applies to perspective projections only (3D content), never to 2D elements or the HUD.
             triangles.screenOffsetUnjittered = triangles.screenOffset;
             if (jitterActive && (proj.type == Projection::Type::Perspective)) {
-                triangles.screenOffset.x += jitterNDC.x;
-                triangles.screenOffset.y += jitterNDC.y;
+                triangles.screenOffset.x += sc.jitterNDC.x;
+                triangles.screenOffset.y += sc.jitterNDC.y;
             }
 
             for (uint32_t d = 0; (d < proj.gameCallCount) && (globalCallIndex < p.maxGameCall); d++) {
@@ -1787,17 +1857,17 @@ namespace RT64 {
                     }
                     // A regular rectangle that should correct its misalignment.
                     else {
-                        horizontalMisalignment = int32_t(p.horizontalMisalignment);
+                        horizontalMisalignment = int32_t(sc.horizontalMisalignment);
                     }
 
-                    clearRect.rect = convertFixedRect(call.callDesc.rect, p.resolutionScale, p.fbWidth, invRatioScale, extOriginPercentage, horizontalMisalignment, call.callDesc.rectLeftOrigin, call.callDesc.rectRightOrigin);
+                    clearRect.rect = convertFixedRect(call.callDesc.rect, sc.resScale, p.fbWidth, invRatioScale, extOriginPercentage, horizontalMisalignment, call.callDesc.rectLeftOrigin, call.callDesc.rectRightOrigin);
                 }
                 else if (call.callDesc.extendedType != DrawExtendedType::None) {
                     switch (call.callDesc.extendedType) {
                     case DrawExtendedType::VertexTestZ:
                         instanceDrawCall.type = InstanceDrawCall::Type::VertexTestZ;
                         instanceDrawCall.vertexTestZ.vertexIndex = call.callDesc.extendedData.vertexTestZ.vertexIndex;
-                        instanceDrawCall.vertexTestZ.resolutionScale = p.resolutionScale;
+                        instanceDrawCall.vertexTestZ.resolutionScale = sc.resScale;
                         instanceDrawCall.vertexTestZ.srcIndexStart = call.meshDesc.faceIndicesStart + 3;
                         instanceDrawCall.vertexTestZ.dstIndexStart = vertexTestZFaceIndicesStart;
                         instanceDrawCall.vertexTestZ.indexCount = 0;
@@ -1893,13 +1963,13 @@ namespace RT64 {
                                 invRatioScale = 1.0f;
                             }
                             else {
-                                horizontalMisalignment = p.horizontalMisalignment;
+                                horizontalMisalignment = sc.horizontalMisalignment;
                             }
 
-                            RenderViewport viewportRect = convertViewportRect(call.callDesc.rect, p.resolutionScale, p.fbWidth, invRatioScale, extOriginPercentage, horizontalMisalignment, call.callDesc.rectLeftOrigin, call.callDesc.rectRightOrigin);
-                            triangles.screenScale = { viewportRect.width / framebuffer.viewport.width, viewportRect.height / framebuffer.viewport.height };
-                            triangles.screenOffset.x = halfPixelOffset.x + ((viewportRect.x + viewportRect.width / 2.0f) - halfViewportSize.x) / halfViewportSize.x;
-                            triangles.screenOffset.y = halfPixelOffset.y + (halfViewportSize.y - (viewportRect.y + viewportRect.height / 2.0f)) / halfViewportSize.y;
+                            RenderViewport viewportRect = convertViewportRect(call.callDesc.rect, sc.resScale, p.fbWidth, invRatioScale, extOriginPercentage, horizontalMisalignment, call.callDesc.rectLeftOrigin, call.callDesc.rectRightOrigin);
+                            triangles.screenScale = { viewportRect.width / sc.viewport.width, viewportRect.height / sc.viewport.height };
+                            triangles.screenOffset.x = sc.halfPixelOffset.x + ((viewportRect.x + viewportRect.width / 2.0f) - sc.halfViewportSize.x) / sc.halfViewportSize.x;
+                            triangles.screenOffset.y = sc.halfPixelOffset.y + (sc.halfViewportSize.y - (viewportRect.y + viewportRect.height / 2.0f)) / sc.halfViewportSize.y;
 
                             if (p.postBlendNoise) {
                                 // Indicate if post blend dither noise should be applied.
@@ -1929,10 +1999,10 @@ namespace RT64 {
                         }
                         else if (call.callDesc.scissorAspect == G_EX_ASPECT_ADJUST) {
                             scissorInvRatioScale = 1.0f / aspectRatioScale;
-                            scissorHorizontalMisalignment = p.horizontalMisalignment;
+                            scissorHorizontalMisalignment = sc.horizontalMisalignment;
                         }
 
-                        triangles.scissor = convertFixedRect(call.callDesc.scissorRect, p.resolutionScale, p.fbWidth, scissorInvRatioScale, extOriginPercentage, int32_t(scissorHorizontalMisalignment), call.callDesc.scissorLeftOrigin, call.callDesc.scissorRightOrigin);
+                        triangles.scissor = convertFixedRect(call.callDesc.scissorRect, sc.resScale, p.fbWidth, scissorInvRatioScale, extOriginPercentage, int32_t(scissorHorizontalMisalignment), call.callDesc.scissorLeftOrigin, call.callDesc.scissorRightOrigin);
 
                         bool usesViewport = (proj.type == Projection::Type::Perspective) || (proj.type == Projection::Type::Orthographic);
                         if (usesViewport) {
@@ -1974,12 +2044,12 @@ namespace RT64 {
                         rtScene.prevProjMatrix = drawData.prevProjTransforms[proj.transformsIndex];
 
                         const auto &viewport = drawData.rspViewports[proj.transformsIndex];
-                        rtScene.viewport = convertViewportRect(viewport.rect(viewportClipRatios), p.resolutionScale, p.fbWidth, invRatioScale, extOriginPercentage, 0.0f, G_EX_ORIGIN_NONE, G_EX_ORIGIN_NONE);
-                        rtScene.scissor = convertFixedRect(proj.scissorRect, p.resolutionScale, p.fbWidth, invRatioScale, extOriginPercentage, 0, G_EX_ORIGIN_NONE, G_EX_ORIGIN_NONE);
+                        rtScene.viewport = convertViewportRect(viewport.rect(viewportClipRatios), sc.resScale, p.fbWidth, invRatioScale, extOriginPercentage, 0.0f, G_EX_ORIGIN_NONE, G_EX_ORIGIN_NONE);
+                        rtScene.scissor = convertFixedRect(proj.scissorRect, sc.resScale, p.fbWidth, invRatioScale, extOriginPercentage, 0, G_EX_ORIGIN_NONE, G_EX_ORIGIN_NONE);
 
                         rtScene.presetScene = p.presetScene;
-                        rtScene.screenWidth = lround(static_cast<float>(p.fbWidth) * p.resolutionScale.x);
-                        rtScene.screenHeight = lround(static_cast<float>(p.fbHeight) * p.resolutionScale.y);
+                        rtScene.screenWidth = lround(static_cast<float>(p.fbWidth) * sc.resScale.x);
+                        rtScene.screenHeight = lround(static_cast<float>(p.fbHeight) * sc.resScale.y);
 
                         if (proj.pointLightCount > 0) {
                             rtScene.pointLights = proj.pointLights.data();
@@ -2002,6 +2072,7 @@ namespace RT64 {
                 else 
 #           endif
                 {
+                    rasterScene.lowRes = lowRes;
                     rasterScene.instanceIndices.push_back(instanceIndex);
                 }
 

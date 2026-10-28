@@ -40,6 +40,7 @@ namespace RT64 {
 
     struct RasterScene {
         std::vector<uint32_t> instanceIndices;
+        bool lowRes = false; // Drawn at the DLSS render size into the top left region of the targets.
 
         RasterScene();
     };
@@ -133,6 +134,11 @@ namespace RT64 {
             RenderTexture *dlssOutput = nullptr;
             DLSSStreamline::Mode dlssMode = DLSSStreamline::Mode::DLAA;
             bool dlssReset = false;
+            bool lowResActive = false;        // The pair's 3D content renders at viewportLow and DLSS upscales it to viewport.
+            RenderViewport viewportLow;
+            std::unique_ptr<RenderBuffer> paramsBufferLow;
+            std::unique_ptr<FramebufferRendererDescriptorFramebufferSet> descRealFbSetLow;
+            std::unique_ptr<FramebufferRendererDescriptorFramebufferSet> descDummyFbSetLow;
             interop::float4x4 dlssViewToClip = interop::float4x4::identity();
             interop::float4x4 dlssWorldToView = interop::float4x4::identity();
             interop::float4x4 dlssViewProj = interop::float4x4::identity();
@@ -174,6 +180,8 @@ namespace RT64 {
             RenderTexture *dlssOutput = nullptr;
             DLSSStreamline::Mode dlssMode = DLSSStreamline::Mode::DLAA;
             bool dlssReset = false;
+            uint32_t dlssRenderWidth = 0;     // DLSS render size for the scaling modes (0 or the full size = DLAA).
+            uint32_t dlssRenderHeight = 0;
         };
 
         FramebufferRenderer(RenderWorker *worker, bool rtSupport, UserConfiguration::GraphicsAPI graphicsAPI, const ShaderLibrary *shaderLibrary);

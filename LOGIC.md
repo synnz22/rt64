@@ -106,6 +106,20 @@ stored (`cameraViewToClip` = the interpolated projection, `clipToPrevClip` = inv
 UNORM targets the recomp uses by default are accepted by DLSS directly. After `slEvaluateFeature` the pass only invalidates
 plume's cached descriptor heap, topology and stencil state; the next raster scene re-binds everything else itself.
 
+### 2026-10-29 — Scaling modes render the pair's 3D content into a top left region of the same targets
+DLSS Quality / Balanced / Performance need the 3D scene rendered smaller than the output. Instead of a second, smaller pair
+of targets (which would need its own framebuffer storage, descriptor sets and a way to read it back for in-pair effects),
+every draw up to and including the marker projection uses a second `ScaleSet`: the resolution scale multiplied by the
+render/output ratio, a viewport of the render size, and the half-pixel, jitter and origin offsets derived from it, plus a
+second `FramebufferParams` buffer with the smaller `resolutionScale` for the pixel shader. The N64 to NDC mapping does not
+change (same `resolution`), so geometry lands in the top left region purely through the viewport; scissors, fill rects and
+the vertex depth test convert with the smaller scale. The motion vector pass and the DLSS input extents use that region,
+the DLSS output extent is the full viewport, and the copy back fills the full region before the HUD scenes draw at full
+size. The render size comes from `slDLSSGetOptimalSettings` per mode and output size (DLAA returns the output size, so
+nothing changes for it), and only the DLSS pair is jittered while a mode is active. Trade-offs: 2D content drawn before the
+3D scene is upscaled with it, and the depth buffer keeps the render-size content afterwards (Majora's Mask never depth
+tests its HUD, so no depth upsample pass yet).
+
 ### 2026-10-29 — History resets come from the camera's transform group and from gaps, not from the matrix ID alone
 Majora's Mask tags its camera with one constant ID and marks a cut by asking the extended GBI to *skip* interpolating the
 camera's position and rotation that frame, so `viewProjections[i].mapped` stays true across cuts. The reset rule is therefore:

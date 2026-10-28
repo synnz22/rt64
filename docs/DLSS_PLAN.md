@@ -1,6 +1,6 @@
 # DLAA / DLSS Super Resolution for RT64 (Zelda64Recomp, Majora's Mask)
 
-Status: **Phases 0-3 (DLAA) complete (2026-10-27/29).** Phase 3's scaling modes checkpoint and Phase 4 not started. The SDK is unpacked at `K:\Git\MM\sdk\streamline-sdk-v2.14.16\` (configure with `-DRT64_ENABLE_DLSS=ON -DRT64_STREAMLINE_SDK_DIR=K:/Git/MM/sdk/streamline-sdk-v2.14.16`). Each phase ends at a
+Status: **Phase 3 complete, DLAA and the scaling modes (2026-10-27/29).** Phase 4 (verification) not started. The SDK is unpacked at `K:\Git\MM\sdk\streamline-sdk-v2.14.16\` (configure with `-DRT64_ENABLE_DLSS=ON -DRT64_STREAMLINE_SDK_DIR=K:/Git/MM/sdk/streamline-sdk-v2.14.16`). Each phase ends at a
 CHECKPOINT; nothing past a checkpoint starts without sign-off.
 
 Branch: `synnz22/rt64` → `dlss-integration`, based on upstream rt64 `main` d9817c6 (2026-10-23).
@@ -356,6 +356,10 @@ hard to do generically.
   (an earlier build reset every frame because the frame map was indexed by the frame-local workload number instead of the
   queue index). Clean DLSS context release on disable and clean `slShutdown` at exit. Images: `docs/phase3/`. Not covered:
   in-game play with the HUD (title demo only, needs a save), frame-time measurement, HFR at 120 Hz, Vulkan, the scaling modes.
+- Phase 3, scaling modes (2026-10-29): implemented as a per-projection scale set inside `addFramebuffer` (section 7 step 8)
+  rather than a second target pair: draws up to the marker use the render-size viewport, scissors, fill rects, vertex depth
+  test scale and a second `FramebufferParams` buffer; later draws use the full size. No depth upsample pass (not needed by
+  Majora's Mask). The recomp menu now offers Off / DLAA / Quality / Balanced / Performance. Verified on the title demo (1600x960 window, MSAA off, D3D12, RTX 4080): Quality creates a 1067x640 -> 1600x960 DLSS context, Balanced 928x557 and Performance 800x480, each with the colour, depth and motion vector extents at the render size and the output extent at full size; `sl.log` has no errors in any of the three runs; the history resets only at the demo's cuts (13 per run including the boot sequence, in groups of three displayed frames). The frozen frames fill the screen with the same framing as the full-size render (no offset or crop, `docs/phase3/frozen_frame_quality_on.png`, `frozen_frame_performance_on.png`), and the 4x crops (`docs/phase3/zoom_face_*`) show Quality close to DLAA on edges and texture detail and Performance visibly softer, as expected from a 2x upscale. The frozen-frame difference against the full-size render grows with the scale factor (36% / 41% / 47% of pixels, mean 2.4 / 2.7 / 3.1 levels). Not covered: 2D backgrounds drawn before the 3D scene (shops), the in-game HUD, and the frame-time gain.
 - Testing notes: the recomp starts straight into the game when a ROM is configured; keys sent with simulated input never reach it
   from a background script (Windows blocks foreground changes), but `PostMessage(WM_KEYDOWN)` to the game window does, and goes
   through the same RT64 filter as real key presses. The game prints nothing to a redirected stdout until a normal exit.

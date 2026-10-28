@@ -66,6 +66,12 @@ namespace RT64 {
         sl::DLSSOptions options;
         bool optionsSet = false;
         bool resourcesAllocated = false;
+        bool historyInvalid = false;
+        sl::DLSSMode queriedMode = sl::DLSSMode::eOff;
+        uint32_t queriedOutputWidth = 0;
+        uint32_t queriedOutputHeight = 0;
+        uint32_t queriedRenderWidth = 0;
+        uint32_t queriedRenderHeight = 0;
         PFun_slInit *slInit = nullptr;
         PFun_slShutdown *slShutdown = nullptr;
         PFun_slIsFeatureSupported *slIsFeatureSupported = nullptr;
@@ -319,6 +325,41 @@ namespace RT64 {
         return status;
     }
 
+    bool DLSSStreamline::queryRenderSize(Mode mode, uint32_t outputWidth, uint32_t outputHeight, uint32_t &renderWidth, uint32_t &renderHeight) {
+        if (!status.supported || (mode == Mode::Off) || (outputWidth == 0) || (outputHeight == 0)) {
+            return false;
+        }
+
+        const sl::DLSSMode slMode = ToStreamlineMode(mode);
+        if ((impl->queriedMode != slMode) || (impl->queriedOutputWidth != outputWidth) || (impl->queriedOutputHeight != outputHeight)) {
+            sl::DLSSOptions options;
+            options.mode = slMode;
+            options.outputWidth = outputWidth;
+            options.outputHeight = outputHeight;
+            sl::DLSSOptimalSettings optimal;
+            const sl::Result result = impl->slDLSSGetOptimalSettings(options, optimal);
+            if (result != sl::Result::eOk) {
+                fprintf(stderr, "slDLSSGetOptimalSettings failed, %s.\n", DescribeResult(result).c_str());
+                return false;
+            }
+
+            // DLAA reports the output size. Never go above the output or below what DLSS allows.
+            impl->queriedMode = slMode;
+            impl->queriedOutputWidth = outputWidth;
+            impl->queriedOutputHeight = outputHeight;
+            impl->queriedRenderWidth = std::min(std::max(optimal.optimalRenderWidth, optimal.renderWidthMin), outputWidth);
+            impl->queriedRenderHeight = std::min(std::max(optimal.optimalRenderHeight, optimal.renderHeightMin), outputHeight);
+            if ((impl->queriedRenderWidth == 0) || (impl->queriedRenderHeight == 0)) {
+                impl->queriedRenderWidth = outputWidth;
+                impl->queriedRenderHeight = outputHeight;
+            }
+        }
+
+        renderWidth = impl->queriedRenderWidth;
+        renderHeight = impl->queriedRenderHeight;
+        return true;
+    }
+
     bool DLSSStreamline::evaluate(const EvaluateParams &p) {
         if (!status.supported || (p.mode == Mode::Off)) {
             return false;
@@ -356,6 +397,7 @@ namespace RT64 {
             }
 
             impl->optionsSet = true;
+            impl->historyInvalid = true;
         }
 
         // Frame token. Streamline counts frames itself from the presents it sees through the swap chain proxy; handing it the
@@ -391,7 +433,8 @@ namespace RT64 {
         consts.depthInverted = sl::Boolean::eFalse;
         consts.cameraMotionIncluded = sl::Boolean::eTrue;
         consts.motionVectors3D = sl::Boolean::eFalse;
-        consts.reset = p.reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+        consts.reset = (p.reset || impl->historyInvalid) ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+        impl->historyInvalid = false;
         consts.orthographicProjection = sl::Boolean::eFalse;
         consts.motionVectorsDilated = sl::Boolean::eFalse;
         consts.motionVectorsJittered = sl::Boolean::eFalse;
@@ -516,6 +559,10 @@ namespace RT64 {
 
     const DLSSStreamline::Status &DLSSStreamline::getStatus() const {
         return status;
+    }
+
+    bool DLSSStreamline::queryRenderSize(Mode mode, uint32_t outputWidth, uint32_t outputHeight, uint32_t &renderWidth, uint32_t &renderHeight) {
+        return false;
     }
 
     bool DLSSStreamline::evaluate(const EvaluateParams &p) {
