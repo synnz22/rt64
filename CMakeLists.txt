@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(rt64 VERSION 0.1.0 LANGUAGES C CXX)
+project(rt64 VERSION 0.2.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
@@ -372,6 +372,7 @@ set (SOURCES
     "${PROJECT_SOURCE_DIR}/src/render/rt64_framebuffer_renderer.cpp"
     "${PROJECT_SOURCE_DIR}/src/render/rt64_geometry_mode.cpp"
     "${PROJECT_SOURCE_DIR}/src/render/rt64_look_at_processor.cpp"
+    "${PROJECT_SOURCE_DIR}/src/render/rt64_motion_vectors.cpp"
     "${PROJECT_SOURCE_DIR}/src/render/rt64_native_target.cpp"
     "${PROJECT_SOURCE_DIR}/src/render/rt64_optimus.cpp"
     "${PROJECT_SOURCE_DIR}/src/render/rt64_projection_processor.cpp"
@@ -531,6 +532,7 @@ build_pixel_shader(  rt64 "src/shaders/PostBlendDitherNoisePS.hlsl" "src/shaders
 build_pixel_shader(  rt64 "src/shaders/PostBlendDitherNoisePS.hlsl" "src/shaders/PostBlendDitherNoiseSubPS.hlsl" "-D SUB_MODE")
 build_pixel_shader(  rt64 "src/shaders/PostBlendDitherNoisePS.hlsl" "src/shaders/PostBlendDitherNoiseSubNegativePS.hlsl" "-D SUB_MODE" "-D NEGATIVE_MODE")
 build_compute_shader(rt64 "src/shaders/RSPModifyCS.hlsl")
+build_compute_shader(rt64 "src/shaders/RSPPrevPosCS.hlsl")
 build_compute_shader(rt64 "src/shaders/RSPProcessCS.hlsl")
 build_compute_shader(rt64 "src/shaders/RSPWorldCS.hlsl")
 build_compute_shader(rt64 "src/shaders/RSPSmoothNormalCS.hlsl")
@@ -544,6 +546,8 @@ build_pixel_shader(  rt64 "src/shaders/RtCopyDepthToColorPS.hlsl")
 build_pixel_shader(  rt64 "src/shaders/RtCopyDepthToColorPS.hlsl" "src/shaders/RtCopyDepthToColor2XPS.hlsl" "-D SAMPLES_2X")
 build_pixel_shader(  rt64 "src/shaders/RtCopyDepthToColorPS.hlsl" "src/shaders/RtCopyDepthToColor4XPS.hlsl" "-D SAMPLES_4X")
 build_pixel_shader(  rt64 "src/shaders/RtCopyDepthToColorPS.hlsl" "src/shaders/RtCopyDepthToColor8XPS.hlsl" "-D SAMPLES_8X")
+build_pixel_shader(  rt64 "src/shaders/MotionVectorDebugPS.hlsl")
+build_pixel_shader(  rt64 "src/shaders/MotionVectorPS.hlsl")
 build_pixel_shader(  rt64 "src/shaders/TextureCopyPS.hlsl")
 build_compute_shader(rt64 "src/shaders/TextureDecodeCS.hlsl")
 build_pixel_shader(  rt64 "src/shaders/TextureResolvePS.hlsl" "src/shaders/TextureResolveSamples2XPS.hlsl" "-D SAMPLES_2X")
@@ -552,6 +556,7 @@ build_pixel_shader(  rt64 "src/shaders/TextureResolvePS.hlsl" "src/shaders/Textu
 build_pixel_shader(  rt64 "src/shaders/VideoInterfacePS.hlsl" "src/shaders/VideoInterfacePSRegular.hlsl")
 build_pixel_shader(  rt64 "src/shaders/VideoInterfacePS.hlsl" "src/shaders/VideoInterfacePSPixel.hlsl" "-D PIXEL_ANTIALIASING")
 build_vertex_shader( rt64 "src/shaders/FullScreenVS.hlsl")
+build_vertex_shader( rt64 "src/shaders/MotionVectorVS.hlsl")
 build_vertex_shader( rt64 "src/shaders/Im3DVS.hlsl")
 build_pixel_shader(  rt64 "src/shaders/ComposePS.hlsl")
 build_pixel_shader(  rt64 "src/shaders/DebugPS.hlsl")

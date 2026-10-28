@@ -160,6 +160,7 @@ namespace RT64 {
         BufferPair worldTransformsBuffer;
         BufferPair viewProjTransformsBuffer;
         BufferPair prevWorldTransformsBuffer;
+        BufferPair prevViewProjTransformsBuffer;
         BufferPair invTWorldTransformsBuffer;
         BufferPair triPosBuffer;
         BufferPair triTcBuffer;
@@ -180,7 +181,11 @@ namespace RT64 {
         ComputedBuffer worldNormBuffer;
         ComputedBuffer worldVelBuffer;
         ComputedBuffer testZIndexBuffer;
+        ComputedBuffer prevScreenPosBuffer;
     };
+
+    // Grows a computed buffer to the required size (recreating it) when needed.
+    void updateOutputBuffer(RenderWorker *worker, ComputedBuffer &computedBuffer, uint64_t requiredSize, RenderBufferFlags flags = RenderBufferFlag::NONE);
 
     struct DebuggerRenderer {
         bool framebufferDepth;
@@ -188,6 +193,7 @@ namespace RT64 {
         uint32_t framebufferAddress;
         int32_t globalDrawCallIndex;
         float interpolationWeight;
+        bool viewMotionVectors = false;
     };
 
     struct DebuggerCamera {

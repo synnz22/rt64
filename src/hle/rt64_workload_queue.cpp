@@ -303,7 +303,7 @@ namespace RT64 {
         rendererCPUProfiler.start();
 
         const bool aspectRatioAdjustment = (abs(workloadConfig.aspectRatioScale - 1.0f) > 1e-6f);
-        const bool processProjections = aspectRatioAdjustment || prevFrame.matched|| curFrame.isDebuggerCameraEnabled(*this);
+        const bool processProjections = aspectRatioAdjustment || prevFrame.matched || curFrame.isDebuggerCameraEnabled(*this) || workloadConfig.motionVectors;
         bool uploadProjections = false;
         if (processProjections) {
             ProjectionProcessor::ProcessParams projParams;
@@ -314,6 +314,7 @@ namespace RT64 {
             projParams.curFrameWeight = curFrameWeight;
             projParams.prevFrameWeight = prevFrameWeight;
             projParams.aspectRatioScale = workloadConfig.aspectRatioScale;
+            projParams.uploadPrev = workloadConfig.motionVectors;
             projectionProcessor.process(projParams);
             projectionProcessor.upload(projParams);
             uploadProjections = true;
@@ -384,6 +385,13 @@ namespace RT64 {
                 rspParams.outputBuffers = &workload.outputBuffers;
                 rspParams.prevFrameWeight = prevFrameWeight;
                 rspParams.curFrameWeight = curFrameWeight;
+                if (workloadConfig.motionVectors) {
+                    // Previous screen positions. Unmatched frames bind the current transforms as previous (zero motion).
+                    rspParams.prevScreenPos = true;
+                    rspParams.prevViewProjBuffer = uploadProjections ? workload.drawBuffers.prevViewProjTransformsBuffer.get() : workload.drawBuffers.viewProjTransformsBuffer.get();
+                    rspParams.prevWorldBuffer = uploadTransforms ? workload.drawBuffers.prevWorldTransformsBuffer.get() : workload.drawBuffers.worldTransformsBuffer.get();
+                }
+
                 rspProcessor->process(rspParams);
             }
 
@@ -600,6 +608,22 @@ namespace RT64 {
                 const FramebufferPair &fbPair = workload.fbPairs[f];
                 fbManager.performDiscards(fbPair.startFbDiscards);
             }
+
+            // Framebuffer pair that receives the motion vector pass: the one that will be presented, or the last one with 3D content.
+            int32_t motionVectorFbPairIndex = -1;
+            if (workloadConfig.motionVectors && !usingMSAA) {
+                motionVectorFbPairIndex = overrideTargetFbPairIndex;
+                for (int32_t f = int32_t(fbPairCount) - 1; (f >= 0) && (motionVectorFbPairIndex < 0); f--) {
+                    const FramebufferPair &fbPair = workload.fbPairs[f];
+                    for (uint32_t pr = 0; pr < fbPair.projectionCount; pr++) {
+                        const Projection &proj = fbPair.projections[pr];
+                        if ((proj.type == Projection::Type::Perspective) && !proj.scissorRect.isNull()) {
+                            motionVectorFbPairIndex = f;
+                            break;
+                        }
+                    }
+                }
+            }
             
             // Add all framebuffer pairs to the framebuffer renderer and setup the operations.
             scratchFbChangePool.reset();
@@ -618,6 +642,7 @@ namespace RT64 {
                     RenderFramebufferStorage &fbStorage = renderFramebufferManager->get(fbKey, colorTarget, (depthTarget != nullptr) ? depthTarget : dummyDepthTarget.get());
                     FramebufferRenderer::DrawParams drawParams;
                     drawParams.worker = ext.workloadGraphicsWorker;
+                    drawParams.highRes = true;
                     drawParams.fbStorage = &fbStorage;
                     drawParams.curWorkload = &workload;
                     drawParams.fbPairIndex = f;
@@ -639,6 +664,18 @@ namespace RT64 {
                     drawParams.postBlendNoise = workloadConfig.postBlendNoise;
                     drawParams.postBlendNoiseNegative = workloadConfig.postBlendNoiseNegative;
                     drawParams.maxGameCall = std::min(gameCallCountMax - gameCallCursor, fbPair.gameCallCount);
+                    drawParams.motionVectors = nullptr;
+                    drawParams.motionVectorsDebugView = false;
+                    if ((int32_t(f) == motionVectorFbPairIndex) && (fbStorage.colorTarget != nullptr) && (fbStorage.depthTarget != nullptr)) {
+                        if (motionVectorTarget == nullptr) {
+                            motionVectorTarget = std::make_unique<MotionVectorTarget>();
+                        }
+
+                        motionVectorTarget->ensure(ext.workloadGraphicsWorker, fbStorage.colorTarget->width, fbStorage.colorTarget->height, fbStorage.depthTarget);
+                        drawParams.motionVectors = motionVectorTarget.get();
+                        drawParams.motionVectorsDebugView = debuggerRenderer.viewMotionVectors;
+                    }
+
                     framebufferRenderer->addFramebuffer(drawParams);
                 }
                 
@@ -913,6 +950,7 @@ namespace RT64 {
                 ElapsedTimer workloadTimer;
                 workloadProfiler.start();
                 threadConfigurationUpdate(workload.viFbSize, workloadConfig);
+                workloadConfig.motionVectors = workload.debuggerRenderer.viewMotionVectors;
 
                 // FIXME: This is a very hacky way to find out if we need to advance the frame if the workload was paused for the first time.
                 if (!workload.paused || (!gameFrames[curFrameIndex].workloads.empty() && (gameFrames[curFrameIndex].workloads[0] != (uint32_t)processCursor))) {
@@ -973,7 +1011,7 @@ namespace RT64 {
                 float prevFrameWeight = 0.0f;
                 float curFrameWeight = 1.0f;
                 float deltaTimeMs = 1.0f / 30.0f;
-                const bool requiresFrameMatching = (workloadConfig.targetRate > 0) || workloadConfig.raytracingEnabled;
+                const bool requiresFrameMatching = (workloadConfig.targetRate > 0) || workloadConfig.raytracingEnabled || workloadConfig.motionVectors;
                 bool generateInterpolatedFrames = false;
                 bool velocityUploaderUsed = false;
                 bool tileInterpolationUsed = false;
@@ -1064,6 +1102,7 @@ namespace RT64 {
                 uint32_t targetIndex = 0;
                 uint32_t framesRendered = 0;
                 int64_t renderTimeTotalMicro = 0;
+                float lastRenderedCurWeight = 1.0f;
                 for (uint32_t frame = 0; (frame < displayFrames) && !skipWorkloadNow; frame++) {
                     // Evaluate if this frame should be skipped. Measure the current time and compare it to what frame is estimated should be have been rendered by now.
                     if ((frame > 0) && (originalTimeMicro > 0)) {
@@ -1110,6 +1149,26 @@ namespace RT64 {
                         curFrameWeight = 1.0f;
                     }
 
+                    // Motion vectors are relative to the frame that was actually rendered last, not to the tick-derived previous slot.
+                    float renderPrevFrameWeight = prevFrameWeight;
+                    if (workloadConfig.motionVectors) {
+                        if (workload.paused) {
+                            mvState.prevFrameWeight = curFrameWeight;
+                            mvState.reset = true;
+                        }
+                        else if (!generateInterpolatedFrames || (framesRendered == 0)) {
+                            mvState.prevFrameWeight = 0.0f;
+                            mvState.reset = false;
+                        }
+                        else {
+                            mvState.prevFrameWeight = lastRenderedCurWeight;
+                            mvState.reset = false;
+                        }
+
+                        mvState.reset = mvState.reset || !prevFrame.matched;
+                        renderPrevFrameWeight = mvState.prevFrameWeight;
+                    }
+
                     const bool uploadExtras = (frame == 0) && workloadConfig.raytracingEnabled;
                     if (uploadExtras) {
                         BufferUploader::Upload extrasUpload = { workload.drawData.extraParams.data(), { 0, workload.drawData.extraParams.size() }, sizeof(interop::ExtraParams), RenderBufferFlag::STORAGE, {}, &workload.drawBuffers.extraParamsBuffer };
@@ -1117,11 +1176,12 @@ namespace RT64 {
                     }
 
                     int64_t renderTimeMicro = workloadTimer.elapsedMicroseconds();
-                    threadRenderFrame(curFrame, prevFrame, workloadConfig, workload.debuggerRenderer, workload.debuggerCamera, curFrameWeight, prevFrameWeight, deltaTimeMs,
+                    threadRenderFrame(curFrame, prevFrame, workloadConfig, workload.debuggerRenderer, workload.debuggerCamera, curFrameWeight, renderPrevFrameWeight, deltaTimeMs,
                         interpolationTargetKey, interpolationTargetFbPairIndex, overrideTarget, overrideModifier, velocityUploaderUsed, uploadExtras, tileInterpolationUsed, lookAtInterpolationUsed);
 
                     // Add total time the frame took to render.
                     renderTimeTotalMicro += workloadTimer.elapsedMicroseconds() - renderTimeMicro;
+                    lastRenderedCurWeight = curFrameWeight;
 
                     // After one frame is rendered, we indicate the workload has been processed so the present thread can start presenting frames as soon as it can.
                     if (frame == 0) {

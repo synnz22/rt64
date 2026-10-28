@@ -19,6 +19,7 @@
 #include "rt64_buffer_uploader.h"
 #include "rt64_descriptor_sets.h"
 #include "rt64_framebuffer_renderer_call.h"
+#include "rt64_motion_vectors.h"
 #include "rt64_raster_shader_cache.h"
 #include "rt64_render_target.h"
 #include "rt64_rsp_processor.h"
@@ -48,6 +49,7 @@ namespace RT64 {
         RenderFramebufferStorage *fbStorage = nullptr;
         std::vector<RasterScene> rasterScenes;
         std::vector<SceneIndexPair> sceneIndices;
+        int32_t motionVectorSceneIndex = -1;
 #   if RT_ENABLED
         std::vector<RaytracingScene> rtScenes;
 #   endif
@@ -76,6 +78,8 @@ namespace RT64 {
         std::array<RenderInputSlot, 3> vertexInputSlots;
         std::array<RenderVertexBufferView, 3> indexedVertexViews;
         std::array<RenderVertexBufferView, 3> rawVertexViews;
+        std::array<RenderInputSlot, 2> motionVectorInputSlots;
+        std::array<RenderVertexBufferView, 2> motionVectorVertexViews;
         RenderIndexBufferView indexBufferView;
         RenderBuffer *testZIndexBuffer = nullptr;
         RenderIndexBufferView testZIndexBufferView;
@@ -118,6 +122,9 @@ namespace RT64 {
             std::set<RenderTarget *> transitionRenderTargetSet;
             RenderTargetDrawCall renderTargetDrawCall;
             RenderViewport viewport;
+            interop::float2 fbResolution = { 0.0f, 0.0f };
+            MotionVectorTarget *motionVectors = nullptr;
+            bool motionVectorsDebugView = false;
         };
 
         std::vector<Framebuffer> framebufferVector;
@@ -147,6 +154,9 @@ namespace RT64 {
             bool postBlendNoise;
             bool postBlendNoiseNegative;
             uint32_t maxGameCall;
+            bool highRes = false;
+            MotionVectorTarget *motionVectors = nullptr;
+            bool motionVectorsDebugView = false;
         };
 
         FramebufferRenderer(RenderWorker *worker, bool rtSupport, UserConfiguration::GraphicsAPI graphicsAPI, const ShaderLibrary *shaderLibrary);
@@ -165,6 +175,7 @@ namespace RT64 {
         void submitRSPSmoothNormalCompute(RenderWorker *worker, const OutputBuffers *outputBuffers);
         bool submitDepthAccess(RenderWorker *worker, RenderFramebufferStorage *fbStorage, bool readOnly, bool &depthState);
         void submitRasterScene(RenderWorker *worker, const Framebuffer &framebuffer, RenderFramebufferStorage *fbStorage, const RasterScene &rasterScene, bool &depthState);
+        void submitMotionVectors(RenderWorker *worker, const Framebuffer &framebuffer, RenderFramebufferStorage *fbStorage, const RasterScene &rasterScene, bool &depthState);
         void addFramebuffer(const DrawParams &p);
         void endFramebuffers(RenderWorker *worker, const DrawBuffers *drawBuffers, const OutputBuffers *outputBuffers, bool rtEnabled);
         void recordSetup(RenderWorker *worker, std::vector<BufferUploader *> bufferUploaders, RSPProcessor *rspProcessor, VertexProcessor *vertexProcessor, const OutputBuffers *outputBuffers, bool rtEnabled);

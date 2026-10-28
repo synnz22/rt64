@@ -52,6 +52,33 @@ namespace RT64 {
         modifyCB.modifyCount = modifyCount;
         modifySet->setBuffer(modifySet->srcModifyPos, p.drawBuffers->modifyPosUintsBuffer.get(), p.drawBuffers->modifyPosUintsBuffer.getView(0));
         modifySet->setBuffer(modifySet->screenPos, p.outputBuffers->screenPosBuffer.buffer.get(), RenderBufferStructuredView(sizeof(float) * 4));
+
+        // Previous screen positions (motion vectors). Never used by the native renderer.
+        prevPosActive = p.prevScreenPos && (p.prevViewProjBuffer != nullptr) && (p.prevWorldBuffer != nullptr);
+        if (prevPosActive) {
+            if (prevPosSet == nullptr) {
+                prevPosSet = std::make_unique<RSPPrevPosDescriptorSet>(p.worker->device);
+                modifyPrevSet = std::make_unique<RSPModifyDescriptorSet>(p.worker->device);
+            }
+
+            ComputedBuffer &prevPosBuffer = p.outputBuffers->prevScreenPosBuffer;
+            updateOutputBuffer(p.worker, prevPosBuffer, drawVertexCount * sizeof(float) * 4, RenderBufferFlag::VERTEX);
+            prevPosCB.vertexStart = uint32_t(prevPosBuffer.computedSize / (sizeof(float) * 4));
+            prevPosCB.vertexCount = drawVertexCount - prevPosCB.vertexStart;
+            prevPosCB.prevFrameWeight = p.prevFrameWeight;
+            prevPosCB.curFrameWeight = p.curFrameWeight;
+            prevPosBuffer.computedSize += prevPosCB.vertexCount * sizeof(float) * 4;
+            prevPosSet->setBuffer(prevPosSet->srcPos, p.drawBuffers->positionBuffer.get(), p.drawBuffers->positionBuffer.getView(0));
+            prevPosSet->setBuffer(prevPosSet->srcVel, p.drawBuffers->velocityBuffer.get(), p.drawBuffers->velocityBuffer.getView(0));
+            prevPosSet->setBuffer(prevPosSet->srcViewProjIndices, p.drawBuffers->viewProjIndicesBuffer.get(), p.drawBuffers->viewProjIndicesBuffer.getView(0));
+            prevPosSet->setBuffer(prevPosSet->srcWorldIndices, p.drawBuffers->worldIndicesBuffer.get(), p.drawBuffers->worldIndicesBuffer.getView(0));
+            prevPosSet->setBuffer(prevPosSet->rspViewportVector, p.drawBuffers->rspViewportsBuffer.get(), RenderBufferStructuredView(sizeof(interop::RSPViewport)));
+            prevPosSet->setBuffer(prevPosSet->prevViewProjTransforms, p.prevViewProjBuffer, RenderBufferStructuredView(sizeof(interop::float4x4)));
+            prevPosSet->setBuffer(prevPosSet->prevWorldTransforms, p.prevWorldBuffer, RenderBufferStructuredView(sizeof(interop::float4x4)));
+            prevPosSet->setBuffer(prevPosSet->dstPrevPos, prevPosBuffer.buffer.get(), RenderBufferStructuredView(sizeof(float) * 4));
+            modifyPrevSet->setBuffer(modifyPrevSet->srcModifyPos, p.drawBuffers->modifyPosUintsBuffer.get(), p.drawBuffers->modifyPosUintsBuffer.getView(0));
+            modifyPrevSet->setBuffer(modifyPrevSet->screenPos, prevPosBuffer.buffer.get(), RenderBufferStructuredView(sizeof(float) * 4));
+        }
     }
 
     void RSPProcessor::recordCommandList(RenderWorker *worker, const ShaderLibrary *shaderLibrary, const OutputBuffers *outputBuffers) {
@@ -90,6 +117,32 @@ namespace RT64 {
             worker->commandList->setComputePushConstants(0, &modifyCB);
             worker->commandList->setComputeDescriptorSet(modifySet->get(), 0);
             worker->commandList->dispatch(dispatchCount, 1, 1);
+            worker->commandList->barriers(RenderBarrierStage::GRAPHICS, afterBarrier);
+        }
+
+        if (prevPosActive && (prevPosCB.vertexCount > 0)) {
+            RenderBuffer *prevPosBuffer = outputBuffers->prevScreenPosBuffer.buffer.get();
+            RenderBufferBarrier beforeBarrier = RenderBufferBarrier(prevPosBuffer, RenderBufferAccess::WRITE);
+            RenderBufferBarrier afterBarrier = RenderBufferBarrier(prevPosBuffer, RenderBufferAccess::READ);
+            const int dispatchCount = (prevPosCB.vertexCount + ThreadGroupSize - 1) / ThreadGroupSize;
+            worker->commandList->barriers(RenderBarrierStage::COMPUTE, beforeBarrier);
+            worker->commandList->setPipeline(shaderLibrary->rspPrevPos.pipeline.get());
+            worker->commandList->setComputePipelineLayout(shaderLibrary->rspPrevPos.pipelineLayout.get());
+            worker->commandList->setComputePushConstants(0, &prevPosCB);
+            worker->commandList->setComputeDescriptorSet(prevPosSet->get(), 0);
+            worker->commandList->dispatch(dispatchCount, 1, 1);
+
+            // Apply the same screen-space overrides so modified vertices report zero motion.
+            if (modifyCB.modifyCount > 0) {
+                const int modifyDispatchCount = (modifyCB.modifyCount + ThreadGroupSize - 1) / ThreadGroupSize;
+                worker->commandList->barriers(RenderBarrierStage::COMPUTE, beforeBarrier);
+                worker->commandList->setPipeline(shaderLibrary->rspModify.pipeline.get());
+                worker->commandList->setComputePipelineLayout(shaderLibrary->rspModify.pipelineLayout.get());
+                worker->commandList->setComputePushConstants(0, &modifyCB);
+                worker->commandList->setComputeDescriptorSet(modifyPrevSet->get(), 0);
+                worker->commandList->dispatch(modifyDispatchCount, 1, 1);
+            }
+
             worker->commandList->barriers(RenderBarrierStage::GRAPHICS, afterBarrier);
         }
     }

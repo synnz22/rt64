@@ -42,6 +42,9 @@ namespace RT64 {
         ShaderRecord luminanceHistogram;
         ShaderRecord postProcess;
         ShaderRecord rspModify;
+        ShaderRecord rspPrevPos;
+        ShaderRecord motionVectors;
+        ShaderRecord motionVectorDebug;
         ShaderRecord rspProcess;
         ShaderRecord rspSmoothNormal;
         ShaderRecord rspVertexTestZ;

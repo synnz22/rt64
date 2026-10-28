@@ -21,6 +21,7 @@ namespace RT64 {
             float curFrameWeight = 1.0f;
             float prevFrameWeight = 0.0f;
             float aspectRatioScale = 1.0f;
+            bool uploadPrev = false;
         };
 
         ProjectionProcessor();

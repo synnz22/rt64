@@ -152,6 +152,7 @@ namespace RT64 {
         outputBuffers.screenPosBuffer.computedSize = 0;
         outputBuffers.genTexCoordBuffer.computedSize = 0;
         outputBuffers.shadedColBuffer.computedSize = 0;
+        outputBuffers.prevScreenPosBuffer.computedSize = 0;
     }
 
     void Workload::resetWorldOutputBuffers() {
@@ -222,7 +223,7 @@ namespace RT64 {
         });
     }
 
-    void updateOutputBuffer(RenderWorker *worker, ComputedBuffer &computedBuffer, uint64_t requiredSize, RenderBufferFlags flags = RenderBufferFlag::NONE) {
+    void updateOutputBuffer(RenderWorker *worker, ComputedBuffer &computedBuffer, uint64_t requiredSize, RenderBufferFlags flags) {
         if (computedBuffer.allocatedSize >= requiredSize) {
             return;
         }

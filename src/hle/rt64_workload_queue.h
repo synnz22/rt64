@@ -58,6 +58,13 @@ namespace RT64 {
             uint32_t targetRate = 0;
             bool postBlendNoise = false;
             bool postBlendNoiseNegative = false;
+            bool motionVectors = false;
+        };
+
+        // Per rendered frame: which previous frame the motion vectors are relative to.
+        struct MotionVectorState {
+            float prevFrameWeight = 0.0f;
+            bool reset = true;
         };
 
         External ext;
@@ -100,6 +107,8 @@ namespace RT64 {
         std::array<GameFrame, 2> gameFrames;
         uint32_t prevFrameIndex = uint32_t(gameFrames.size()) - 1;
         uint32_t curFrameIndex = 0;
+        MotionVectorState mvState;
+        std::unique_ptr<MotionVectorTarget> motionVectorTarget;
 
         WorkloadQueue();
         ~WorkloadQueue();

@@ -610,6 +610,9 @@ namespace RT64 {
             case VK_F4:
                 processDeveloperShortcut(DeveloperShortcut::Replacements);
                 return true;
+            case VK_F6:
+                processDeveloperShortcut(DeveloperShortcut::MotionVectors);
+                return true;
             default:
                 // Unknown shortcut.
                 break;
@@ -642,6 +645,9 @@ namespace RT64 {
                 return true;
             case SDL_SCANCODE_F4:
                 processDeveloperShortcut(DeveloperShortcut::Replacements);
+                return true;
+            case SDL_SCANCODE_F6:
+                processDeveloperShortcut(DeveloperShortcut::MotionVectors);
                 return true;
             default:
                 // Don't filter the key event.
@@ -689,6 +695,15 @@ namespace RT64 {
         }
         case DeveloperShortcut::Replacements: {
             textureCache->textureMap.replacementMapEnabled = !textureCache->textureMap.replacementMapEnabled;
+            break;
+        }
+        case DeveloperShortcut::MotionVectors: {
+            if (userConfig.developerMode && (state != nullptr)) {
+                bool &viewMotionVectors = state->debuggerInspector.renderer.viewMotionVectors;
+                viewMotionVectors = !viewMotionVectors;
+                fprintf(stdout, "Motion vector view %s.\n", viewMotionVectors ? "enabled" : "disabled");
+            }
+
             break;
         }
         default:

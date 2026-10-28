@@ -41,6 +41,7 @@ namespace RT64 {
                 bool vertexTestZ : 1;
                 bool postBlendDitherNoise : 1;
                 bool postBlendDitherNoiseNegative : 1;
+                bool perspective : 1;
             } triangles;
 
             struct {

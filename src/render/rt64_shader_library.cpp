@@ -4,6 +4,8 @@
 
 #include "rt64_shader_library.h"
 
+#include "shared/rt64_motion_vector_params.h"
+
 #include "common/rt64_common.h"
 #include "shared/rt64_render_target_copy.h"
 #include "shared/rt64_rsp_vertex_test_z.h"
@@ -26,6 +28,7 @@
 #include "shaders/IdleCS.hlsl.spirv.h"
 #include "shaders/LuminanceHistogramCS.hlsl.spirv.h"
 #include "shaders/RSPModifyCS.hlsl.spirv.h"
+#include "shaders/RSPPrevPosCS.hlsl.spirv.h"
 #include "shaders/RSPProcessCS.hlsl.spirv.h"
 #include "shaders/RSPSmoothNormalCS.hlsl.spirv.h"
 #include "shaders/RSPVertexTestZCS.hlsl.spirv.h"
@@ -39,6 +42,9 @@
 #include "shaders/RtCopyDepthToColor2XPS.hlsl.spirv.h"
 #include "shaders/RtCopyDepthToColor4XPS.hlsl.spirv.h"
 #include "shaders/RtCopyDepthToColor8XPS.hlsl.spirv.h"
+#include "shaders/MotionVectorDebugPS.hlsl.spirv.h"
+#include "shaders/MotionVectorPS.hlsl.spirv.h"
+#include "shaders/MotionVectorVS.hlsl.spirv.h"
 #include "shaders/TextureCopyPS.hlsl.spirv.h"
 #include "shaders/TextureDecodeCS.hlsl.spirv.h"
 #include "shaders/TextureResolveSamples2XPS.hlsl.spirv.h"
@@ -72,6 +78,7 @@
 #   include "shaders/IdleCS.hlsl.dxil.h"
 #   include "shaders/LuminanceHistogramCS.hlsl.dxil.h"
 #   include "shaders/RSPModifyCS.hlsl.dxil.h"
+#   include "shaders/RSPPrevPosCS.hlsl.dxil.h"
 #   include "shaders/RSPProcessCS.hlsl.dxil.h"
 #   include "shaders/RSPSmoothNormalCS.hlsl.dxil.h"
 #   include "shaders/RSPVertexTestZCS.hlsl.dxil.h"
@@ -85,6 +92,9 @@
 #   include "shaders/RtCopyDepthToColor2XPS.hlsl.dxil.h"
 #   include "shaders/RtCopyDepthToColor4XPS.hlsl.dxil.h"
 #   include "shaders/RtCopyDepthToColor8XPS.hlsl.dxil.h"
+#   include "shaders/MotionVectorDebugPS.hlsl.dxil.h"
+#   include "shaders/MotionVectorPS.hlsl.dxil.h"
+#   include "shaders/MotionVectorVS.hlsl.dxil.h"
 #   include "shaders/TextureCopyPS.hlsl.dxil.h"
 #   include "shaders/TextureDecodeCS.hlsl.dxil.h"
 #   include "shaders/TextureResolveSamples2XPS.hlsl.dxil.h"
@@ -117,6 +127,7 @@
 #   include "shaders/IdleCS.hlsl.metal.h"
 #   include "shaders/LuminanceHistogramCS.hlsl.metal.h"
 #   include "shaders/RSPModifyCS.hlsl.metal.h"
+#   include "shaders/RSPPrevPosCS.hlsl.metal.h"
 #   include "shaders/RSPProcessCS.hlsl.metal.h"
 #   include "shaders/RSPSmoothNormalCS.hlsl.metal.h"
 #   include "shaders/RSPVertexTestZCS.hlsl.metal.h"
@@ -130,6 +141,9 @@
 #   include "shaders/RtCopyDepthToColor2XPS.hlsl.metal.h"
 #   include "shaders/RtCopyDepthToColor4XPS.hlsl.metal.h"
 #   include "shaders/RtCopyDepthToColor8XPS.hlsl.metal.h"
+#   include "shaders/MotionVectorDebugPS.hlsl.metal.h"
+#   include "shaders/MotionVectorPS.hlsl.metal.h"
+#   include "shaders/MotionVectorVS.hlsl.metal.h"
 #   include "shaders/TextureCopyPS.hlsl.metal.h"
 #   include "shaders/TextureDecodeCS.hlsl.metal.h"
 #   include "shaders/TextureResolveSamples2XPS.hlsl.metal.h"
@@ -521,6 +535,20 @@ namespace RT64 {
             rspProcess.pipeline = device->createComputePipeline(pipelineDesc);
         }
 
+        // RSP Previous Position (motion vectors).
+        {
+            RSPPrevPosDescriptorSet descriptorSet;
+            layoutBuilder.begin();
+            layoutBuilder.addPushConstant(0, 0, sizeof(uint32_t) * 4, RenderShaderStageFlag::COMPUTE);
+            layoutBuilder.addDescriptorSet(descriptorSet);
+            layoutBuilder.end();
+            rspPrevPos.pipelineLayout = layoutBuilder.create(device);
+
+            std::unique_ptr<RenderShader> computeShader = device->createShader(CREATE_SHADER_INPUTS(RSPPrevPosCSBlobDXIL, RSPPrevPosCSBlobSPIRV, RSPPrevPosCSBlobMSL, "CSMain", shaderFormat));
+            RenderComputePipelineDesc pipelineDesc(rspPrevPos.pipelineLayout.get(), computeShader.get(), 64, 1, 1);
+            rspPrevPos.pipeline = device->createComputePipeline(pipelineDesc);
+        }
+
         // RSP Smooth Normal.
         {
             RSPSmoothNormalDescriptorSet descriptorSet;
@@ -547,6 +575,65 @@ namespace RT64 {
             std::unique_ptr<RenderShader> computeShader = device->createShader(CREATE_SHADER_INPUTS(RSPWorldCSBlobDXIL, RSPWorldCSBlobSPIRV, RSPWorldCSBlobMSL, "CSMain", shaderFormat));
             RenderComputePipelineDesc pipelineDesc(rspWorld.pipelineLayout.get(), computeShader.get(), 64, 1, 1);
             rspWorld.pipeline = device->createComputePipeline(pipelineDesc);
+        }
+
+        // Motion Vectors.
+        {
+            static const RenderInputSlot motionVectorInputSlots[2] = {
+                RenderInputSlot(0, sizeof(float) * 4),
+                RenderInputSlot(1, sizeof(float) * 4)
+            };
+
+            static const RenderInputElement motionVectorInputElements[2] = {
+                RenderInputElement("POSITION", 0, 0, RenderFormat::R32G32B32A32_FLOAT, 0, 0),
+                RenderInputElement("PREVPOSITION", 0, 1, RenderFormat::R32G32B32A32_FLOAT, 1, 0)
+            };
+
+            layoutBuilder.begin(false, true);
+            layoutBuilder.addPushConstant(0, 0, sizeof(interop::MotionVectorParams), RenderShaderStageFlag::VERTEX | RenderShaderStageFlag::PIXEL);
+            layoutBuilder.end();
+            motionVectors.pipelineLayout = layoutBuilder.create(device);
+
+            std::unique_ptr<RenderShader> vertexShader = device->createShader(CREATE_SHADER_INPUTS(MotionVectorVSBlobDXIL, MotionVectorVSBlobSPIRV, MotionVectorVSBlobMSL, "VSMain", shaderFormat));
+            std::unique_ptr<RenderShader> pixelShader = device->createShader(CREATE_SHADER_INPUTS(MotionVectorPSBlobDXIL, MotionVectorPSBlobSPIRV, MotionVectorPSBlobMSL, "PSMain", shaderFormat));
+            RenderGraphicsPipelineDesc pipelineDesc;
+            pipelineDesc.pipelineLayout = motionVectors.pipelineLayout.get();
+            pipelineDesc.renderTargetBlend[0] = RenderBlendDesc::Copy();
+            pipelineDesc.renderTargetFormat[0] = RenderFormat::R16G16_FLOAT;
+            pipelineDesc.renderTargetCount = 1;
+            pipelineDesc.depthTargetFormat = RenderFormat::D32_FLOAT;
+            pipelineDesc.depthEnabled = true;
+            pipelineDesc.depthFunction = RenderComparisonFunction::EQUAL;
+            pipelineDesc.depthWriteEnabled = false;
+            pipelineDesc.cullMode = RenderCullMode::NONE;
+            pipelineDesc.inputSlots = motionVectorInputSlots;
+            pipelineDesc.inputSlotsCount = uint32_t(std::size(motionVectorInputSlots));
+            pipelineDesc.inputElements = motionVectorInputElements;
+            pipelineDesc.inputElementsCount = uint32_t(std::size(motionVectorInputElements));
+            pipelineDesc.primitiveTopology = RenderPrimitiveTopology::TRIANGLE_LIST;
+            pipelineDesc.vertexShader = vertexShader.get();
+            pipelineDesc.pixelShader = pixelShader.get();
+            motionVectors.pipeline = device->createGraphicsPipeline(pipelineDesc);
+        }
+
+        // Motion Vector Debug.
+        {
+            MotionVectorDebugDescriptorSet descriptorSet;
+            layoutBuilder.begin();
+            layoutBuilder.addPushConstant(0, 0, sizeof(interop::MotionVectorParams), RenderShaderStageFlag::PIXEL);
+            layoutBuilder.addDescriptorSet(descriptorSet);
+            layoutBuilder.end();
+            motionVectorDebug.pipelineLayout = layoutBuilder.create(device);
+
+            std::unique_ptr<RenderShader> pixelShader = device->createShader(CREATE_SHADER_INPUTS(MotionVectorDebugPSBlobDXIL, MotionVectorDebugPSBlobSPIRV, MotionVectorDebugPSBlobMSL, "PSMain", shaderFormat));
+            RenderGraphicsPipelineDesc pipelineDesc;
+            pipelineDesc.pipelineLayout = motionVectorDebug.pipelineLayout.get();
+            pipelineDesc.renderTargetBlend[0] = RenderBlendDesc::AlphaBlend();
+            pipelineDesc.renderTargetFormat[0] = RenderTarget::colorBufferFormat(usesHDR);
+            pipelineDesc.renderTargetCount = 1;
+            pipelineDesc.vertexShader = fullScreenVertexShader.get();
+            pipelineDesc.pixelShader = pixelShader.get();
+            motionVectorDebug.pipeline = device->createGraphicsPipeline(pipelineDesc);
         }
 
         // Texture Copy.

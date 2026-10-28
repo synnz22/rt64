@@ -156,6 +156,9 @@ namespace RT64 {
             DrawBuffers &drawBuffers = workload.drawBuffers;
             std::pair<size_t, size_t> uploadRange = { 0, drawData.viewProjTransforms.size() };
             uploads.emplace_back(BufferUploader::Upload{ drawData.modViewProjTransforms.data(), uploadRange, sizeof(interop::float4x4), RenderBufferFlag::STORAGE, { }, &drawBuffers.viewProjTransformsBuffer });
+            if (p.uploadPrev) {
+                uploads.emplace_back(BufferUploader::Upload{ drawData.prevViewProjTransforms.data(), uploadRange, sizeof(interop::float4x4), RenderBufferFlag::STORAGE, { }, &drawBuffers.prevViewProjTransformsBuffer });
+            }
         }
 
         bufferUploader->submit(p.worker, uploads);

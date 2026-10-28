@@ -505,6 +505,34 @@ namespace RT64 {
         }
     };
 
+    struct RSPPrevPosDescriptorSet : RenderDescriptorSetBase {
+        uint32_t srcPos;
+        uint32_t srcVel;
+        uint32_t srcViewProjIndices;
+        uint32_t srcWorldIndices;
+        uint32_t rspViewportVector;
+        uint32_t prevViewProjTransforms;
+        uint32_t prevWorldTransforms;
+        uint32_t dstPrevPos;
+
+        RSPPrevPosDescriptorSet(RenderDevice *device = nullptr) {
+            builder.begin();
+            srcPos = builder.addFormattedBuffer(1);
+            srcVel = builder.addFormattedBuffer(2);
+            srcViewProjIndices = builder.addFormattedBuffer(3);
+            srcWorldIndices = builder.addFormattedBuffer(4);
+            rspViewportVector = builder.addStructuredBuffer(5);
+            prevViewProjTransforms = builder.addStructuredBuffer(6);
+            prevWorldTransforms = builder.addStructuredBuffer(7);
+            dstPrevPos = builder.addReadWriteStructuredBuffer(8);
+            builder.end();
+
+            if (device != nullptr) {
+                create(device);
+            }
+        }
+    };
+
     struct RSPProcessDescriptorSet : RenderDescriptorSetBase {
         uint32_t srcPos;
         uint32_t srcVel;
@@ -621,6 +649,20 @@ namespace RT64 {
             dstPos = builder.addReadWriteStructuredBuffer(8);
             dstNorm = builder.addReadWriteStructuredBuffer(9);
             dstVel = builder.addReadWriteStructuredBuffer(10);
+            builder.end();
+
+            if (device != nullptr) {
+                create(device);
+            }
+        }
+    };
+
+    struct MotionVectorDebugDescriptorSet : RenderDescriptorSetBase {
+        uint32_t gMotionVectors;
+
+        MotionVectorDebugDescriptorSet(RenderDevice *device = nullptr) {
+            builder.begin();
+            gMotionVectors = builder.addTexture(1);
             builder.end();
 
             if (device != nullptr) {

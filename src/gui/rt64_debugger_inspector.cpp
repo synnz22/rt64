@@ -61,6 +61,7 @@ namespace RT64 {
         renderer.framebufferDepth = false;
         renderer.globalDrawCallIndex = -1;
         renderer.interpolationWeight = 1.0f;
+        renderer.viewMotionVectors = false;
         camera.enabled = false;
         camera.sceneIndex = 0;
         camera.viewMatrix = hlslpp::float4x4::identity();
@@ -380,6 +381,7 @@ namespace RT64 {
         ImGui::BeginDisabled(renderer.framebufferIndex < 0);
         ImGui::Checkbox("View Depth Buffer", &renderer.framebufferDepth);
         ImGui::EndDisabled();
+        ImGui::Checkbox("View Motion Vectors", &renderer.viewMotionVectors);
         ImGui::SliderInt("View Draw Call", &renderer.globalDrawCallIndex, -1, workload.gameCallCount);
         renderer.globalDrawCallIndex = std::min(renderer.globalDrawCallIndex, int32_t(workload.gameCallCount));
         ImGui::SliderFloat("Interpolation Weight", &renderer.interpolationWeight, 0.0f, 1.0f);

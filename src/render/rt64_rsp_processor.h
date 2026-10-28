@@ -28,12 +28,21 @@ namespace RT64 {
             OutputBuffers *outputBuffers = nullptr;
             float prevFrameWeight = 0.0f;
             float curFrameWeight = 1.0f;
+
+            // Optional previous screen positions for motion vectors (high-res renderer only).
+            bool prevScreenPos = false;
+            const RenderBuffer *prevViewProjBuffer = nullptr;
+            const RenderBuffer *prevWorldBuffer = nullptr;
         };
 
         ProcessCB processCB;
+        ProcessCB prevPosCB;
+        bool prevPosActive = false;
         ModifyCB modifyCB;
         std::unique_ptr<RSPProcessDescriptorSet> processSet;
         std::unique_ptr<RSPModifyDescriptorSet> modifySet;
+        std::unique_ptr<RSPPrevPosDescriptorSet> prevPosSet;
+        std::unique_ptr<RSPModifyDescriptorSet> modifyPrevSet;
 
         RSPProcessor(RenderDevice *device);
         ~RSPProcessor();

@@ -48,6 +48,24 @@ DLAA (render size = output size) needs no resolution plumbing and proves the who
 (inputs, constants, history resets). Quality/Balanced/Performance come afterwards by rendering the
 3D scenes into a smaller region of the same grow-only render targets.
 
+### 2026-10-28 — Motion vectors come from what RT64 already computes, in one extra small pass
+RT64 matches draw calls between game frames and already uploads each object's *previous* world transform; it also computed the
+previous view-projection on the CPU but never uploaded it. The high-res renderer now (only when motion vectors are on):
+1. uploads those previous view-projection matrices (`ProjectionProcessor::upload`, `uploadPrev`);
+2. runs `RSPPrevPosCS`, a sibling of the vertex compute shader, that writes each vertex's previous-frame screen position into
+   `OutputBuffers::prevScreenPosBuffer` (the native renderer keeps its own descriptor set untouched);
+3. splits the framebuffer pair's raster scene right after the last perspective projection that writes depth, and draws those
+   draws again with `MotionVectorVS`/`MotionVectorPS` into an R16G16_FLOAT texture using the depth buffer read-only with an EQUAL
+   test, so only the visible surface writes its vector (previous minus current position, in pixels).
+Unmatched objects bind the current transforms as "previous", which yields camera-only motion for free. With high framerate
+interpolation the "previous frame" is the frame that was actually rendered last (`WorkloadQueue::mvState`), not the tick-derived
+weight RT64 uses elsewhere, which drifts when frames are skipped. The ubershader uses dual-source blending, which is why the
+vectors cannot be a second render target of the main pass. The pass is skipped under MSAA.
+
+### 2026-10-28 — Developer shortcut F6 toggles the motion vector view
+The inspector checkbox is the primary toggle, but a key makes testing from scripts and from ports without a mouse-driven
+inspector practical. Like F1-F4 it only works with `developerMode` on.
+
 ### 2026-10-27 — Add a GPU preference setting
 plume picks the D3D12 adapter with the most VRAM, which on a two-GPU machine can be the slower
 card or one not driving the monitor. `UserConfiguration::deviceName` (empty = unchanged behaviour)

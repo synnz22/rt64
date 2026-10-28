@@ -1,6 +1,6 @@
 # DLAA / DLSS Super Resolution for RT64 (Zelda64Recomp, Majora's Mask)
 
-Status: **Phase 0 (recon + setup) complete, 2026-10-27.** Phases 1–4 not started. Each phase ends at a
+Status: **Phase 1 (motion vectors) complete, 2026-10-28; Phase 0 complete, 2026-10-27.** Phases 2–4 not started. Each phase ends at a
 CHECKPOINT; nothing past a checkpoint starts without sign-off.
 
 Branch: `synnz22/rt64` → `dlss-integration`, based on upstream rt64 `main` d9817c6 (2026-10-23).
@@ -317,6 +317,19 @@ a second ubershader output pass per draw with per-material classification, which
 hard to do generically.
 
 ## 10. Results and known issues (filled per phase)
+
+- Phase 1 (2026-10-28): implemented as planned (section 7, Phase 1 steps 1-6) with one deviation: the previous-position compute is
+  a sibling shader (`RSPPrevPosCS`) and the overlay is drawn at render time, both so the native renderer is untouched. A second
+  deviation is the F6 developer shortcut, added because the inspector could not be driven from scripts. Verified on the title demo
+  (window 1600x960, 4x scale, MSAA off, D3D12): camera flying forward through Clock Town gives opposite hues on the left and right
+  walls and nothing on the sky; a static camera with an animated character tints only the character; a camera pan tints every
+  static surface with one hue while the character differs. At the "Display" refresh rate (60 Hz, three displayed frames per game
+  frame) the vectors are about a third of the length seen at "Original" (20 fps), which is the expected previous-displayed-frame
+  behaviour. Screenshots: `docs/phase1/`. Not yet covered: Termina Field and in-game walking (needs a loaded save; the title demo
+  only shows Clock Town), and a numeric read-back of the texture. EQUAL depth testing showed no visible holes.
+- Testing notes: the recomp starts straight into the game when a ROM is configured; keys sent with simulated input never reach it
+  from a background script (Windows blocks foreground changes), but `PostMessage(WM_KEYDOWN)` to the game window does, and goes
+  through the same RT64 filter as real key presses. The game prints nothing to a redirected stdout until a normal exit.
 
 - Phase 0 (2026-10-27): the ported build launches to the recomp launcher, the user started the game and it runs (reported
   "runs but definitely not 4K": their `graphics.json` has Window Mode = Windowed with Resolution = Auto, so RT64 renders at the

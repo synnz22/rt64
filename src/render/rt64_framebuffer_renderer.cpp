@@ -4,6 +4,8 @@
 
 #include "rt64_framebuffer_renderer.h"
 
+#include "shared/rt64_motion_vector_params.h"
+
 #include "../include/rt64_extended_gbi.h"
 
 #include "common/rt64_elapsed_timer.h"
@@ -1297,6 +1299,10 @@ namespace RT64 {
                 const RasterScene &rasterScene = targetDrawCall.rasterScenes[pair.first];
                 submitDepthAccess(worker, targetDrawCall.fbStorage, false, depthState);
                 submitRasterScene(worker, framebuffer, targetDrawCall.fbStorage, rasterScene, depthState);
+
+                if ((framebuffer.motionVectors != nullptr) && (int32_t(pair.first) == targetDrawCall.motionVectorSceneIndex)) {
+                    submitMotionVectors(worker, framebuffer, targetDrawCall.fbStorage, rasterScene, depthState);
+                }
             }
         }
     }
@@ -1315,6 +1321,83 @@ namespace RT64 {
         rtResources->setRaytracingConfig(rtConfig, resolutionChanged);
     }
 #endif
+
+    void FramebufferRenderer::submitMotionVectors(RenderWorker *worker, const Framebuffer &framebuffer, RenderFramebufferStorage *fbStorage, const RasterScene &rasterScene, bool &depthState) {
+        MotionVectorTarget *motionVectors = framebuffer.motionVectors;
+        assert(motionVectors != nullptr);
+        assert(fbStorage->depthTarget != nullptr);
+
+        // Draw the motion vectors of the 3D geometry that wrote depth, using the depth buffer as read-only with an EQUAL test.
+        RenderTextureBarrier startBarriers[] = {
+            RenderTextureBarrier(motionVectors->texture.get(), RenderTextureLayout::COLOR_WRITE),
+            RenderTextureBarrier(fbStorage->depthTarget->texture.get(), RenderTextureLayout::DEPTH_READ)
+        };
+
+        worker->commandList->barriers(RenderBarrierStage::GRAPHICS, startBarriers, uint32_t(std::size(startBarriers)));
+        worker->commandList->setFramebuffer(motionVectors->framebuffer.get());
+        worker->commandList->clearColor(0, RenderColor(0.0f, 0.0f, 0.0f, 0.0f));
+        worker->commandList->setGraphicsPipelineLayout(shaderLibrary->motionVectors.pipelineLayout.get());
+        worker->commandList->setPipeline(shaderLibrary->motionVectors.pipeline.get());
+        worker->commandList->setViewports(framebuffer.viewport);
+        worker->commandList->setVertexBuffers(0, motionVectorVertexViews.data(), uint32_t(motionVectorVertexViews.size()), motionVectorInputSlots.data());
+
+        interop::MotionVectorParams params;
+        params.resolution = framebuffer.fbResolution;
+        params.viewportSize = { framebuffer.viewport.width, framebuffer.viewport.height };
+
+        bool indexBufferSet = false;
+        bool previousVertexTestZ = false;
+        RenderRect previousScissor;
+        for (uint32_t i : rasterScene.instanceIndices) {
+            const InstanceDrawCall &drawCall = instanceDrawCallVector[i];
+            if (drawCall.type != InstanceDrawCall::Type::IndexedTriangles) {
+                continue;
+            }
+
+            // Only perspective draws that write depth. Decals and transparent surfaces inherit the motion of the surface below them.
+            const auto &triangles = drawCall.triangles;
+            const interop::OtherMode otherMode = triangles.shaderDesc.otherMode;
+            if (!triangles.perspective || triangles.scissor.isEmpty() || !otherMode.zUpd() || (otherMode.zMode() == ZMODE_DEC)) {
+                continue;
+            }
+
+            if (!indexBufferSet || (triangles.vertexTestZ != previousVertexTestZ)) {
+                worker->commandList->setIndexBuffer(triangles.vertexTestZ ? &testZIndexBufferView : &indexBufferView);
+                previousVertexTestZ = triangles.vertexTestZ;
+                indexBufferSet = true;
+            }
+
+            if (previousScissor != triangles.scissor) {
+                worker->commandList->setScissors(triangles.scissor);
+                previousScissor = triangles.scissor;
+            }
+
+            params.screenScale = triangles.screenScale;
+            params.screenOffset = triangles.screenOffset;
+            worker->commandList->setGraphicsPushConstants(0, &params);
+            worker->commandList->drawIndexedInstanced(triangles.faceCount * 3, 1, triangles.indexStart, 0, 0);
+        }
+
+        worker->commandList->barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(motionVectors->texture.get(), RenderTextureLayout::SHADER_READ));
+
+        // Optional debug overlay drawn over the color target (color only).
+        if (framebuffer.motionVectorsDebugView && (fbStorage->colorTarget != nullptr)) {
+            fbStorage->colorTarget->setupColorFramebuffer(worker);
+            worker->commandList->setFramebuffer(fbStorage->colorTarget->textureFramebuffer.get());
+            worker->commandList->setGraphicsPipelineLayout(shaderLibrary->motionVectorDebug.pipelineLayout.get());
+            worker->commandList->setPipeline(shaderLibrary->motionVectorDebug.pipeline.get());
+            worker->commandList->setGraphicsDescriptorSet(motionVectors->debugDescSet->get(), 0);
+            worker->commandList->setGraphicsPushConstants(0, &params);
+            worker->commandList->setViewports(framebuffer.viewport);
+            worker->commandList->setScissors(RenderRect(0, 0, int32_t(framebuffer.viewport.width), int32_t(framebuffer.viewport.height)));
+            worker->commandList->drawInstanced(3, 1, 0, 0);
+        }
+
+        // Restore the depth-write framebuffer. The next raster scene re-binds its pipeline layout, descriptor sets and viewport itself.
+        worker->commandList->barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(fbStorage->depthTarget->texture.get(), RenderTextureLayout::DEPTH_WRITE));
+        worker->commandList->setFramebuffer(fbStorage->colorDepthWrite.get());
+        depthState = false;
+    }
 
     void FramebufferRenderer::addFramebuffer(const DrawParams &p) {
         assert(p.fbStorage != nullptr);
@@ -1389,6 +1472,16 @@ namespace RT64 {
         rawVertexViews[0] = RenderVertexBufferView(RenderBufferReference(triPosRes), PosStride * rawTriVertexCount);
         rawVertexViews[1] = RenderVertexBufferView(RenderBufferReference(triTcRes), TcStride * rawTriVertexCount);
         rawVertexViews[2] = RenderVertexBufferView(RenderBufferReference(triColRes), ColStride * rawTriVertexCount);
+
+        // Motion vector pass inputs: current and previous screen positions.
+        const RenderBuffer *prevScreenPosRes = outputBuffers.prevScreenPosBuffer.buffer.get();
+        const bool motionVectorsReady = (p.motionVectors != nullptr) && (prevScreenPosRes != nullptr) && (vertexCount > 0);
+        if (motionVectorsReady) {
+            motionVectorInputSlots[0] = RenderInputSlot(0, PosStride);
+            motionVectorInputSlots[1] = RenderInputSlot(1, PosStride);
+            motionVectorVertexViews[0] = RenderVertexBufferView(RenderBufferReference(screenPosRes), PosStride * vertexCount);
+            motionVectorVertexViews[1] = RenderVertexBufferView(RenderBufferReference(prevScreenPosRes), PosStride * vertexCount);
+        }
         testZIndexBuffer = outputBuffers.testZIndexBuffer.buffer.get();
         testZIndexBufferView = RenderIndexBufferView(testZIndexBuffer, uint32_t(outputBuffers.testZIndexBuffer.allocatedSize), RenderFormat::R32_UINT);
 
@@ -1430,6 +1523,7 @@ namespace RT64 {
 
         targetDrawCall.fbStorage = p.fbStorage;
         targetDrawCall.sceneIndices.clear();
+        targetDrawCall.motionVectorSceneIndex = -1;
 
         const float SimilarityPercentage = 0.1f; // TODO: Make more strict once VI ratios are in.
         const float scissorRatio = static_cast<float>(fbPair.scissorRect.width(false, true)) / static_cast<float>(fbPair.scissorRect.height(false, true));
@@ -1442,6 +1536,9 @@ namespace RT64 {
         const float originalWidth = p.fbWidth * p.resolutionScale.y;
         const float commonHeight = float(p.targetHeight);
         framebuffer.viewport = RenderViewport(0.0f, 0.0f, wideWidth, commonHeight);
+        framebuffer.fbResolution = fbParams.resolution;
+        framebuffer.motionVectors = motionVectorsReady ? p.motionVectors : nullptr;
+        framebuffer.motionVectorsDebugView = motionVectorsReady && p.motionVectorsDebugView;
         
         const interop::float2 halfViewportSize = { framebuffer.viewport.width / 2.0f, framebuffer.viewport.height / 2.0f };
         const interop::float2 halfPixelOffset = { 1.0f / framebuffer.viewport.width, -1.0f / framebuffer.viewport.height };
@@ -1449,6 +1546,26 @@ namespace RT64 {
         const float extOriginPercentage = p.extAspectPercentage;
         uint32_t vertexTestZFaceIndicesStart = 0;
         int32_t vertexTestZCallIndex = -1;
+        // Motion vectors are drawn right after the last perspective projection that writes depth.
+        int32_t motionVectorProjIndex = -1;
+        if (framebuffer.motionVectors != nullptr) {
+            for (uint32_t pr = 0; pr < fbPair.projectionCount; pr++) {
+                const Projection &proj = fbPair.projections[pr];
+                if ((proj.type != Projection::Type::Perspective) || proj.scissorRect.isNull()) {
+                    continue;
+                }
+
+                for (uint32_t d = 0; d < proj.gameCallCount; d++) {
+                    const GameCall &call = proj.gameCalls[d];
+                    const bool regularCall = (call.callDesc.otherMode.cycleType() != G_CYC_FILL) && (call.callDesc.extendedType == DrawExtendedType::None);
+                    if (regularCall && call.shaderDesc.otherMode.zUpd()) {
+                        motionVectorProjIndex = int32_t(pr);
+                        break;
+                    }
+                }
+            }
+        }
+
         RenderViewport viewportClip;
         for (uint32_t pr = 0; (pr < fbPair.projectionCount) && (globalCallIndex < p.maxGameCall); pr++) {
             const Projection &proj = fbPair.projections[pr];
@@ -1622,6 +1739,7 @@ namespace RT64 {
                         triangles.faceCount = call.callDesc.triangleCount;
                         triangles.vertexTestZ = (vertexTestZCallIndex >= 0);
                         triangles.postBlendDitherNoise = false;
+                        triangles.perspective = (proj.type == Projection::Type::Perspective);
 
                         float invRatioScale = 1.0f / aspectRatioScale;
                         float horizontalMisalignment = 0.0f;
@@ -1763,6 +1881,13 @@ namespace RT64 {
 
                 instanceDrawCallVector.push_back(instanceDrawCall);
                 globalCallIndex++;
+            }
+
+            // Close the scene after the projection that ends the 3D content so the motion vector pass runs right after it.
+            if ((motionVectorProjIndex >= 0) && (int32_t(pr) == motionVectorProjIndex)) {
+                if (checkRasterScene(rasterScene)) {
+                    targetDrawCall.motionVectorSceneIndex = int32_t(targetDrawCall.rasterScenes.size()) - 1;
+                }
             }
         }
 
