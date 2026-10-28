@@ -3,6 +3,20 @@
 All notable changes on this branch. Newest first. Upstream RT64 has no version number; this branch
 starts at 0.1.0.
 
+## [0.3.0] - 2026-10-28
+
+### Added
+- Sub-pixel camera jitter for the high resolution renderer (Phase 2 of the DLSS plan): a Halton (2,3) offset per displayed
+  frame, applied only to perspective (3D) draws and never to 2D elements or the HUD. Off by default; when off the output is
+  bit-identical to before (verified on a frozen frame).
+- "Force Jitter" checkbox next to "View Motion Vectors" in the debugger tab, and the F9 developer shortcut for it.
+- F10 developer shortcut: pause/resume rendering (the same flag as the debugger tab's Pause button) so a frame can be frozen
+  from the keyboard.
+
+### Changed
+- The motion vector pass uses the unjittered positions, so jitter never leaks into the motion vectors.
+- Developer shortcuts: F6 motion vectors, F9 jitter, F10 pause (F5/F7 are left to the recomp's quick-save/quick-load keys).
+
 ## [0.2.0] - 2026-10-28
 
 ### Added

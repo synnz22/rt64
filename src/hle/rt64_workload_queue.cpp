@@ -609,6 +609,13 @@ namespace RT64 {
                 fbManager.performDiscards(fbPair.startFbDiscards);
             }
 
+            // Sub-pixel jitter (Halton 2,3) for the 3D content of this displayed frame. Zero when off, so nothing changes downstream.
+            jitterPixels = 0.0f;
+            if (workloadConfig.jitter) {
+                const uint32_t phaseCount = HaltonJitterPhaseCount(1, 1);
+                jitterPixels = HaltonJitter(int(framebufferRenderer->frameParams.frameCount), int(phaseCount));
+            }
+
             // Framebuffer pair that receives the motion vector pass: the one that will be presented, or the last one with 3D content.
             int32_t motionVectorFbPairIndex = -1;
             if (workloadConfig.motionVectors && !usingMSAA) {
@@ -664,6 +671,7 @@ namespace RT64 {
                     drawParams.postBlendNoise = workloadConfig.postBlendNoise;
                     drawParams.postBlendNoiseNegative = workloadConfig.postBlendNoiseNegative;
                     drawParams.maxGameCall = std::min(gameCallCountMax - gameCallCursor, fbPair.gameCallCount);
+                    drawParams.jitterPixels = jitterPixels;
                     drawParams.motionVectors = nullptr;
                     drawParams.motionVectorsDebugView = false;
                     if ((int32_t(f) == motionVectorFbPairIndex) && (fbStorage.colorTarget != nullptr) && (fbStorage.depthTarget != nullptr)) {
@@ -951,6 +959,7 @@ namespace RT64 {
                 workloadProfiler.start();
                 threadConfigurationUpdate(workload.viFbSize, workloadConfig);
                 workloadConfig.motionVectors = workload.debuggerRenderer.viewMotionVectors;
+                workloadConfig.jitter = workload.debuggerRenderer.forceJitter;
 
                 // FIXME: This is a very hacky way to find out if we need to advance the frame if the workload was paused for the first time.
                 if (!workload.paused || (!gameFrames[curFrameIndex].workloads.empty() && (gameFrames[curFrameIndex].workloads[0] != (uint32_t)processCursor))) {

@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -64,6 +66,12 @@ namespace RT64 {
 
     inline hlslpp::float2 HaltonJitter(int frame, int phases) {
         return { HaltonSequence(frame % phases + 1, 2) - 0.5f, HaltonSequence(frame % phases + 1, 3) - 0.5f };
+    }
+
+    // Jitter sequence length recommended for temporal upscalers: 8 x (display / render)^2, never below 8.
+    inline uint32_t HaltonJitterPhaseCount(uint32_t renderHeight, uint32_t displayHeight) {
+        const float ratio = (renderHeight > 0) ? (float(displayHeight) / float(renderHeight)) : 1.0f;
+        return std::max(8u, uint32_t(std::ceil(8.0f * ratio * ratio)));
     }
 
     struct RectI {

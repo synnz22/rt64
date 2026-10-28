@@ -194,6 +194,7 @@ namespace RT64 {
         int32_t globalDrawCallIndex;
         float interpolationWeight;
         bool viewMotionVectors = false;
+        bool forceJitter = false;
     };
 
     struct DebuggerCamera {

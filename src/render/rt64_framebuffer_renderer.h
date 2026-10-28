@@ -155,6 +155,7 @@ namespace RT64 {
             bool postBlendNoiseNegative;
             uint32_t maxGameCall;
             bool highRes = false;
+            interop::float2 jitterPixels = { 0.0f, 0.0f };
             MotionVectorTarget *motionVectors = nullptr;
             bool motionVectorsDebugView = false;
         };

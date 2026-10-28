@@ -35,6 +35,7 @@ namespace RT64 {
                 const RenderPipeline *pipeline;
                 interop::float2 screenScale;
                 interop::float2 screenOffset;
+                interop::float2 screenOffsetUnjittered;
                 RenderRect scissor;
                 uint32_t indexStart;
                 uint32_t faceCount;

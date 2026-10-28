@@ -1373,7 +1373,7 @@ namespace RT64 {
             }
 
             params.screenScale = triangles.screenScale;
-            params.screenOffset = triangles.screenOffset;
+            params.screenOffset = triangles.screenOffsetUnjittered;
             worker->commandList->setGraphicsPushConstants(0, &params);
             worker->commandList->drawIndexedInstanced(triangles.faceCount * 3, 1, triangles.indexStart, 0, 0);
         }
@@ -1542,6 +1542,8 @@ namespace RT64 {
         
         const interop::float2 halfViewportSize = { framebuffer.viewport.width / 2.0f, framebuffer.viewport.height / 2.0f };
         const interop::float2 halfPixelOffset = { 1.0f / framebuffer.viewport.width, -1.0f / framebuffer.viewport.height };
+        const bool jitterActive = p.highRes && ((p.jitterPixels.x != 0.0f) || (p.jitterPixels.y != 0.0f));
+        const interop::float2 jitterNDC = { (2.0f * p.jitterPixels.x) / framebuffer.viewport.width, (-2.0f * p.jitterPixels.y) / framebuffer.viewport.height };
         const float middleViewport = (wideWidth / 2.0f) - (originalWidth / 2.0f);
         const float extOriginPercentage = p.extAspectPercentage;
         uint32_t vertexTestZFaceIndicesStart = 0;
@@ -1621,6 +1623,13 @@ namespace RT64 {
                 }
 
                 viewportClip = convertViewportRect(viewport.rect(viewportClipRatios), p.resolutionScale, p.fbWidth, projInvRatioScale, extOriginPercentage, 0.0f, viewportOrigin, viewportOrigin);
+            }
+
+            // Sub-pixel jitter applies to perspective projections only (3D content), never to 2D elements or the HUD.
+            triangles.screenOffsetUnjittered = triangles.screenOffset;
+            if (jitterActive && (proj.type == Projection::Type::Perspective)) {
+                triangles.screenOffset.x += jitterNDC.x;
+                triangles.screenOffset.y += jitterNDC.y;
             }
 
             for (uint32_t d = 0; (d < proj.gameCallCount) && (globalCallIndex < p.maxGameCall); d++) {

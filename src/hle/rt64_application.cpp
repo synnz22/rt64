@@ -613,6 +613,12 @@ namespace RT64 {
             case VK_F6:
                 processDeveloperShortcut(DeveloperShortcut::MotionVectors);
                 return true;
+            case VK_F9:
+                processDeveloperShortcut(DeveloperShortcut::Jitter);
+                return true;
+            case VK_F10:
+                processDeveloperShortcut(DeveloperShortcut::Pause);
+                return true;
             default:
                 // Unknown shortcut.
                 break;
@@ -648,6 +654,12 @@ namespace RT64 {
                 return true;
             case SDL_SCANCODE_F6:
                 processDeveloperShortcut(DeveloperShortcut::MotionVectors);
+                return true;
+            case SDL_SCANCODE_F9:
+                processDeveloperShortcut(DeveloperShortcut::Jitter);
+                return true;
+            case SDL_SCANCODE_F10:
+                processDeveloperShortcut(DeveloperShortcut::Pause);
                 return true;
             default:
                 // Don't filter the key event.
@@ -702,6 +714,24 @@ namespace RT64 {
                 bool &viewMotionVectors = state->debuggerInspector.renderer.viewMotionVectors;
                 viewMotionVectors = !viewMotionVectors;
                 fprintf(stdout, "Motion vector view %s.\n", viewMotionVectors ? "enabled" : "disabled");
+            }
+
+            break;
+        }
+        case DeveloperShortcut::Jitter: {
+            if (userConfig.developerMode && (state != nullptr)) {
+                bool &forceJitter = state->debuggerInspector.renderer.forceJitter;
+                forceJitter = !forceJitter;
+                fprintf(stdout, "Forced sub-pixel jitter %s.\n", forceJitter ? "enabled" : "disabled");
+            }
+
+            break;
+        }
+        case DeveloperShortcut::Pause: {
+            // Same flag the inspector's Pause button uses: the last workload keeps being rendered and presented.
+            if (userConfig.developerMode && (state != nullptr)) {
+                state->debuggerInspector.paused = !state->debuggerInspector.paused;
+                fprintf(stdout, "Rendering %s.\n", state->debuggerInspector.paused ? "paused" : "resumed");
             }
 
             break;

@@ -59,6 +59,7 @@ namespace RT64 {
             bool postBlendNoise = false;
             bool postBlendNoiseNegative = false;
             bool motionVectors = false;
+            bool jitter = false;
         };
 
         // Per rendered frame: which previous frame the motion vectors are relative to.
@@ -109,6 +110,7 @@ namespace RT64 {
         uint32_t curFrameIndex = 0;
         MotionVectorState mvState;
         std::unique_ptr<MotionVectorTarget> motionVectorTarget;
+        hlslpp::float2 jitterPixels = 0.0f;
 
         WorkloadQueue();
         ~WorkloadQueue();

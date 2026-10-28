@@ -56,7 +56,9 @@ namespace RT64 {
             RayTracing,
             ViewRDRAM,
             Replacements,
-            MotionVectors
+            MotionVectors,
+            Jitter,
+            Pause
         };
 
         struct Core {

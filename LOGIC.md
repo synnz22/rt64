@@ -62,9 +62,20 @@ interpolation the "previous frame" is the frame that was actually rendered last 
 weight RT64 uses elsewhere, which drifts when frames are skipped. The ubershader uses dual-source blending, which is why the
 vectors cannot be a second render target of the main pass. The pass is skipped under MSAA.
 
-### 2026-10-28 — Developer shortcut F6 toggles the motion vector view
-The inspector checkbox is the primary toggle, but a key makes testing from scripts and from ports without a mouse-driven
-inspector practical. Like F1-F4 it only works with `developerMode` on.
+### 2026-10-28 — Jitter goes through the existing per-draw screen offset, perspective projections only
+`RasterVS` already applies a per-draw NDC translation (`RasterParams::screenOffset`, the half-pixel offset) after the N64 screen
+space mapping, so a sub-pixel jitter is just an extra NDC offset `(2*jx/viewportWidth, -2*jy/viewportHeight)` added to it per
+projection in `addFramebuffer`; no shader or push-constant layout change. It is added only for `Projection::Type::Perspective`,
+because orthographic projections, rects and raw triangles are the game's 2D content (HUD, text boxes, framebuffer effects) and
+a temporal upscaler wants those unjittered. The sequence is Halton (2,3) indexed by the renderer's displayed-frame counter
+(`HaltonJitter`), with `HaltonJitterPhaseCount` = 8 x (display / render)^2 as DLSS recommends (8 for DLAA). Nothing is added at
+all when jitter is off, which keeps the off path bit-identical; the motion vector pass always uses the unjittered offset.
+
+### 2026-10-28 — Developer shortcuts F6 / F9 / F10 (motion vectors, jitter, pause)
+The inspector checkboxes are the primary toggles, but keys make testing from scripts and from ports without a mouse-driven
+inspector practical. Like F1-F4 they only work with `developerMode` on. F5/F7/F8/F11 are avoided because Zelda64Recomp uses
+them (quick-save, quick-load, UI debugger, fullscreen). F10 toggles the same `DebuggerInspector::paused` flag as the debugger
+tab's Pause button, which otherwise only reacts to F4 while that tab is open.
 
 ### 2026-10-27 — Add a GPU preference setting
 plume picks the D3D12 adapter with the most VRAM, which on a two-GPU machine can be the slower

@@ -1,6 +1,6 @@
 # DLAA / DLSS Super Resolution for RT64 (Zelda64Recomp, Majora's Mask)
 
-Status: **Phase 1 (motion vectors) complete, 2026-10-28; Phase 0 complete, 2026-10-27.** Phases 2–4 not started. Each phase ends at a
+Status: **Phases 0-2 complete (2026-10-27/28).** Phase 3 (Streamline / DLSS) not started; it needs the SDK at `K:\Git\MM\sdk\streamline\`. Each phase ends at a
 CHECKPOINT; nothing past a checkpoint starts without sign-off.
 
 Branch: `synnz22/rt64` → `dlss-integration`, based on upstream rt64 `main` d9817c6 (2026-10-23).
@@ -327,9 +327,20 @@ hard to do generically.
   frame) the vectors are about a third of the length seen at "Original" (20 fps), which is the expected previous-displayed-frame
   behaviour. Screenshots: `docs/phase1/`. Not yet covered: Termina Field and in-game walking (needs a loaded save; the title demo
   only shows Clock Town), and a numeric read-back of the texture. EQUAL depth testing showed no visible holes.
+- Phase 2 (2026-10-28): implemented as planned (section 7, Phase 2): the jitter is folded into the per-projection `screenOffset`
+  for perspective projections only; `screenOffsetUnjittered` feeds the motion vector pass; Halton (2,3) with 8 phases for DLAA;
+  toggles: "Force Jitter" in the debugger tab and F9; F10 pauses rendering. Verified on a frame frozen with F10 (title demo,
+  1600x960 window, MSAA off, D3D12): two captures with jitter off are bit-identical (0 of 1,536,000 pixels differ), jitter
+  off -> on -> off is bit-identical to the first capture, jitter on changes 35% of the pixels by a mean of 2 levels (sub-pixel
+  texture resampling) with larger differences only along edges, and two jittered frames differ from each other (38%, different
+  phases). The difference mask covers only the 3D content; the letterbox bars are untouched. With both the motion vector view and
+  jitter on, the vectors look the same as without jitter. Screenshots and masks: `docs/phase2/`.
 - Testing notes: the recomp starts straight into the game when a ROM is configured; keys sent with simulated input never reach it
   from a background script (Windows blocks foreground changes), but `PostMessage(WM_KEYDOWN)` to the game window does, and goes
   through the same RT64 filter as real key presses. The game prints nothing to a redirected stdout until a normal exit.
+  Posted mouse clicks only hover ImGui widgets, which is why F10 exists. The PC rebooted unexpectedly a few minutes after the
+  last Phase 2 run (game already closed, no crash dump, no GPU watchdog or hardware error record, an unrelated crash dump from
+  six days earlier exists); nothing links it to these changes, but it is noted here in case it recurs.
 
 - Phase 0 (2026-10-27): the ported build launches to the recomp launcher, the user started the game and it runs (reported
   "runs but definitely not 4K": their `graphics.json` has Window Mode = Windowed with Resolution = Auto, so RT64 renders at the
