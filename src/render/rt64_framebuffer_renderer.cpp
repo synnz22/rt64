@@ -1302,6 +1302,10 @@ namespace RT64 {
 
                 if ((framebuffer.motionVectors != nullptr) && (int32_t(pair.first) == targetDrawCall.motionVectorSceneIndex)) {
                     submitMotionVectors(worker, framebuffer, targetDrawCall.fbStorage, rasterScene, depthState);
+
+                    if ((framebuffer.dlss != nullptr) && (framebuffer.dlssOutput != nullptr)) {
+                        submitUpscaler(worker, framebuffer, targetDrawCall.fbStorage, depthState);
+                    }
                 }
             }
         }
@@ -1395,6 +1399,129 @@ namespace RT64 {
 
         // Restore the depth-write framebuffer. The next raster scene re-binds its pipeline layout, descriptor sets and viewport itself.
         worker->commandList->barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(fbStorage->depthTarget->texture.get(), RenderTextureLayout::DEPTH_WRITE));
+        worker->commandList->setFramebuffer(fbStorage->colorDepthWrite.get());
+        depthState = false;
+    }
+
+    int32_t FramebufferRenderer::findMotionVectorProjection(const FramebufferPair &fbPair) {
+        // The last perspective projection with a regular draw that writes depth: the 3D content ends there and the HUD follows.
+        int32_t projIndex = -1;
+        for (uint32_t pr = 0; pr < fbPair.projectionCount; pr++) {
+            const Projection &proj = fbPair.projections[pr];
+            if ((proj.type != Projection::Type::Perspective) || proj.scissorRect.isNull()) {
+                continue;
+            }
+
+            for (uint32_t d = 0; d < proj.gameCallCount; d++) {
+                const GameCall &call = proj.gameCalls[d];
+                const bool regularCall = (call.callDesc.otherMode.cycleType() != G_CYC_FILL) && (call.callDesc.extendedType == DrawExtendedType::None);
+                if (regularCall && call.shaderDesc.otherMode.zUpd()) {
+                    projIndex = int32_t(pr);
+                    break;
+                }
+            }
+        }
+
+        return projIndex;
+    }
+
+    int32_t FramebufferRenderer::findMainPerspectiveProjection(const FramebufferPair &fbPair) {
+        // The perspective projection with the most depth-writing draws: the game's main camera for this framebuffer.
+        int32_t projIndex = -1;
+        uint32_t bestCallCount = 0;
+        for (uint32_t pr = 0; pr < fbPair.projectionCount; pr++) {
+            const Projection &proj = fbPair.projections[pr];
+            if ((proj.type != Projection::Type::Perspective) || proj.scissorRect.isNull()) {
+                continue;
+            }
+
+            uint32_t callCount = 0;
+            for (uint32_t d = 0; d < proj.gameCallCount; d++) {
+                const GameCall &call = proj.gameCalls[d];
+                const bool regularCall = (call.callDesc.otherMode.cycleType() != G_CYC_FILL) && (call.callDesc.extendedType == DrawExtendedType::None);
+                callCount += (regularCall && call.shaderDesc.otherMode.zUpd()) ? 1 : 0;
+            }
+
+            if (callCount > bestCallCount) {
+                bestCallCount = callCount;
+                projIndex = int32_t(pr);
+            }
+        }
+
+        return projIndex;
+    }
+
+    void FramebufferRenderer::submitUpscaler(RenderWorker *worker, const Framebuffer &framebuffer, RenderFramebufferStorage *fbStorage, bool &depthState) {
+        RenderTarget *colorTarget = fbStorage->colorTarget;
+        RenderTarget *depthTarget = fbStorage->depthTarget;
+        assert(colorTarget != nullptr);
+        assert(depthTarget != nullptr);
+        assert(framebuffer.motionVectors != nullptr);
+        assert(framebuffer.dlss != nullptr);
+        assert(framebuffer.dlssOutput != nullptr);
+
+        const uint32_t width = uint32_t(framebuffer.viewport.width);
+        const uint32_t height = uint32_t(framebuffer.viewport.height);
+        if ((width == 0) || (height == 0)) {
+            return;
+        }
+
+        // DLSS reads the color, depth and motion vectors as shader resources and writes the output through an unordered access view.
+        RenderTextureBarrier inputBarriers[] = {
+            RenderTextureBarrier(colorTarget->texture.get(), RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(depthTarget->texture.get(), RenderTextureLayout::DEPTH_READ),
+            RenderTextureBarrier(framebuffer.motionVectors->texture.get(), RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(framebuffer.dlssOutput, RenderTextureLayout::GENERAL)
+        };
+
+        worker->commandList->barriers(RenderBarrierStage::COMPUTE, inputBarriers, uint32_t(std::size(inputBarriers)));
+        worker->commandList->setFramebuffer(nullptr);
+
+        DLSSStreamline::EvaluateParams evalParams;
+        evalParams.commandList = worker->commandList.get();
+        evalParams.inputColor = colorTarget->texture.get();
+        evalParams.depth = depthTarget->texture.get();
+        evalParams.motionVectors = framebuffer.motionVectors->texture.get();
+        evalParams.outputColor = framebuffer.dlssOutput;
+        evalParams.mode = framebuffer.dlssMode;
+        evalParams.renderWidth = width;
+        evalParams.renderHeight = height;
+        evalParams.outputWidth = width;
+        evalParams.outputHeight = height;
+        evalParams.viewToClip = framebuffer.dlssViewToClip;
+        evalParams.worldToView = framebuffer.dlssWorldToView;
+
+        // Current clip space to the previous frame's clip space (row vector convention: current clip -> world -> previous clip).
+        const hlslpp::float4x4 viewProj = framebuffer.dlssViewProj;
+        const hlslpp::float4x4 prevViewProj = framebuffer.dlssPrevViewProj;
+        evalParams.clipToPrevClip = hlslpp::mul(hlslpp::inverse(viewProj), prevViewProj);
+        evalParams.jitterPixels = hlslpp::float2(framebuffer.jitterPixels.x, framebuffer.jitterPixels.y);
+        evalParams.frameIndex = frameParams.frameCount;
+
+        // The history is only valid when the previous displayed frame went through DLSS as well.
+        const bool continuous = upscaledBefore && (frameParams.frameCount == (lastUpscaledFrame + 1));
+        evalParams.reset = framebuffer.dlssReset || !continuous;
+        if (framebuffer.dlss->evaluate(evalParams)) {
+            // Copy the result over the frame region of the color target. The HUD and anything drawn after lands on top of it.
+            RenderTextureBarrier copyBarriers[] = {
+                RenderTextureBarrier(framebuffer.dlssOutput, RenderTextureLayout::COPY_SOURCE),
+                RenderTextureBarrier(colorTarget->texture.get(), RenderTextureLayout::COPY_DEST)
+            };
+
+            worker->commandList->barriers(RenderBarrierStage::COPY, copyBarriers, uint32_t(std::size(copyBarriers)));
+            const RenderBox srcBox(0, 0, int32_t(width), int32_t(height));
+            worker->commandList->copyTextureRegion(RenderTextureCopyLocation::Subresource(colorTarget->texture.get()), RenderTextureCopyLocation::Subresource(framebuffer.dlssOutput), 0, 0, 0, &srcBox);
+            lastUpscaledFrame = frameParams.frameCount;
+            upscaledBefore = true;
+        }
+
+        // Back to drawing into the color target with depth writes. The next raster scene re-binds its own pipeline state.
+        RenderTextureBarrier endBarriers[] = {
+            RenderTextureBarrier(colorTarget->texture.get(), RenderTextureLayout::COLOR_WRITE),
+            RenderTextureBarrier(depthTarget->texture.get(), RenderTextureLayout::DEPTH_WRITE)
+        };
+
+        worker->commandList->barriers(RenderBarrierStage::GRAPHICS, endBarriers, uint32_t(std::size(endBarriers)));
         worker->commandList->setFramebuffer(fbStorage->colorDepthWrite.get());
         depthState = false;
     }
@@ -1539,6 +1666,11 @@ namespace RT64 {
         framebuffer.fbResolution = fbParams.resolution;
         framebuffer.motionVectors = motionVectorsReady ? p.motionVectors : nullptr;
         framebuffer.motionVectorsDebugView = motionVectorsReady && p.motionVectorsDebugView;
+        framebuffer.jitterPixels = p.jitterPixels;
+        framebuffer.dlss = motionVectorsReady ? p.dlss : nullptr;
+        framebuffer.dlssOutput = motionVectorsReady ? p.dlssOutput : nullptr;
+        framebuffer.dlssMode = p.dlssMode;
+        framebuffer.dlssReset = p.dlssReset;
         
         const interop::float2 halfViewportSize = { framebuffer.viewport.width / 2.0f, framebuffer.viewport.height / 2.0f };
         const interop::float2 halfPixelOffset = { 1.0f / framebuffer.viewport.width, -1.0f / framebuffer.viewport.height };
@@ -1548,25 +1680,10 @@ namespace RT64 {
         const float extOriginPercentage = p.extAspectPercentage;
         uint32_t vertexTestZFaceIndicesStart = 0;
         int32_t vertexTestZCallIndex = -1;
-        // Motion vectors are drawn right after the last perspective projection that writes depth.
-        int32_t motionVectorProjIndex = -1;
-        if (framebuffer.motionVectors != nullptr) {
-            for (uint32_t pr = 0; pr < fbPair.projectionCount; pr++) {
-                const Projection &proj = fbPair.projections[pr];
-                if ((proj.type != Projection::Type::Perspective) || proj.scissorRect.isNull()) {
-                    continue;
-                }
-
-                for (uint32_t d = 0; d < proj.gameCallCount; d++) {
-                    const GameCall &call = proj.gameCalls[d];
-                    const bool regularCall = (call.callDesc.otherMode.cycleType() != G_CYC_FILL) && (call.callDesc.extendedType == DrawExtendedType::None);
-                    if (regularCall && call.shaderDesc.otherMode.zUpd()) {
-                        motionVectorProjIndex = int32_t(pr);
-                        break;
-                    }
-                }
-            }
-        }
+        // Motion vectors (and DLSS) run right after the last perspective projection that writes depth. The upscaler's camera
+        // constants come from the main camera, which is not necessarily the last projection.
+        const int32_t motionVectorProjIndex = (framebuffer.motionVectors != nullptr) ? findMotionVectorProjection(fbPair) : -1;
+        const int32_t mainProjIndex = (framebuffer.dlss != nullptr) ? findMainPerspectiveProjection(fbPair) : -1;
 
         RenderViewport viewportClip;
         for (uint32_t pr = 0; (pr < fbPair.projectionCount) && (globalCallIndex < p.maxGameCall); pr++) {
@@ -1890,6 +2007,17 @@ namespace RT64 {
 
                 instanceDrawCallVector.push_back(instanceDrawCall);
                 globalCallIndex++;
+            }
+
+            // Camera of the main 3D content for the upscaler: its interpolated matrices, which never carry the jitter.
+            if ((mainProjIndex >= 0) && (int32_t(pr) == mainProjIndex)) {
+                const uint32_t transformsIndex = proj.transformsIndex;
+                if ((transformsIndex < drawData.modProjTransforms.size()) && (transformsIndex < drawData.modViewTransforms.size()) && (transformsIndex < drawData.modViewProjTransforms.size())) {
+                    framebuffer.dlssViewToClip = drawData.modProjTransforms[transformsIndex];
+                    framebuffer.dlssWorldToView = drawData.modViewTransforms[transformsIndex];
+                    framebuffer.dlssViewProj = drawData.modViewProjTransforms[transformsIndex];
+                    framebuffer.dlssPrevViewProj = (transformsIndex < drawData.prevViewProjTransforms.size()) ? drawData.prevViewProjTransforms[transformsIndex] : framebuffer.dlssViewProj;
+                }
             }
 
             // Close the scene after the projection that ends the 3D content so the motion vector pass runs right after it.

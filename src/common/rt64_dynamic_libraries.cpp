@@ -27,7 +27,7 @@ namespace RT64 {
 
     // DynamicLibraries
 
-    bool DynamicLibraries::load() {
+    bool DynamicLibraries::moduleDirectory(std::filesystem::path &path) {
 #   if defined(_WIN32)
         HMODULE moduleHandle = nullptr;
         if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, LPCWSTR(LocalFunction), &moduleHandle)) {
@@ -43,8 +43,20 @@ namespace RT64 {
         }
 
         // Extract the directory from the module path.
-        std::filesystem::path fullPath(modulePath);
-        fullPath.remove_filename();
+        path = std::filesystem::path(modulePath);
+        path.remove_filename();
+        return true;
+#   else
+        return false;
+#   endif
+    }
+
+    bool DynamicLibraries::load() {
+#   if defined(_WIN32)
+        std::filesystem::path fullPath;
+        if (!moduleDirectory(fullPath)) {
+            return false;
+        }
 
         const std::wstring fullPathStr = fullPath.wstring();
         for (const NameRequiredPair &pair : DynamicLibraryList) {

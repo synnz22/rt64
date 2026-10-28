@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(rt64 VERSION 0.3.0 LANGUAGES C CXX)
+project(rt64 VERSION 0.4.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
@@ -12,6 +12,11 @@ option(RT64_STATIC "Build RT64 as a static library" OFF)
 
 
 option(RT64_SDL_WINDOW_VULKAN "Build RT64 to expect an SDL Window outside of Windows" OFF)
+
+# NVIDIA DLSS through the Streamline SDK (Windows, D3D12). The SDK stays outside the tree and its DLLs are loaded at
+# runtime, so a build with this ON still runs on machines without them. See docs/DLSS_PLAN.md.
+option(RT64_ENABLE_DLSS "Build NVIDIA DLSS (Streamline) support into the high resolution renderer. Windows only, needs RT64_STREAMLINE_SDK_DIR." OFF)
+set(RT64_STREAMLINE_SDK_DIR "" CACHE PATH "Root of the NVIDIA Streamline SDK (contains include/sl.h and bin/x64/sl.interposer.dll). Only used when RT64_ENABLE_DLSS is ON.")
 
 if (NOT ${RT64_STATIC})
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -369,6 +374,7 @@ set (SOURCES
     "${PROJECT_SOURCE_DIR}/src/imgui/imgui_impl_sdl2_custom.cpp"
 
     "${PROJECT_SOURCE_DIR}/src/render/rt64_buffer_uploader.cpp"
+    "${PROJECT_SOURCE_DIR}/src/render/rt64_dlss_streamline.cpp"
     "${PROJECT_SOURCE_DIR}/src/render/rt64_framebuffer_renderer.cpp"
     "${PROJECT_SOURCE_DIR}/src/render/rt64_geometry_mode.cpp"
     "${PROJECT_SOURCE_DIR}/src/render/rt64_look_at_processor.cpp"
@@ -478,6 +484,31 @@ if (WIN32)
         ${PROJECT_SOURCE_DIR}/src/contrib/dxc/lib/x64/dxcompiler.lib)
 
     target_include_directories(rt64 PRIVATE ${zstd_SOURCE_DIR}/lib)
+endif()
+
+# NVIDIA DLSS (optional). Only rt64_dlss_streamline.cpp sees the SDK headers, and the define is private to the rt64
+# target on purpose: no public header changes shape with this option.
+if (RT64_ENABLE_DLSS)
+    if (NOT WIN32)
+        message(FATAL_ERROR "RT64_ENABLE_DLSS is only supported on Windows.")
+    endif()
+    if (NOT EXISTS "${RT64_STREAMLINE_SDK_DIR}/include/sl.h")
+        message(FATAL_ERROR "RT64_ENABLE_DLSS is ON but RT64_STREAMLINE_SDK_DIR (\"${RT64_STREAMLINE_SDK_DIR}\") does not contain include/sl.h. Point it at an unpacked Streamline SDK.")
+    endif()
+    target_compile_definitions(rt64 PRIVATE RT64_DLSS_ENABLED=1)
+    target_include_directories(rt64 PRIVATE "${RT64_STREAMLINE_SDK_DIR}/include")
+    set(RT64_STREAMLINE_RUNTIME_DLLS
+        "${RT64_STREAMLINE_SDK_DIR}/bin/x64/sl.interposer.dll"
+        "${RT64_STREAMLINE_SDK_DIR}/bin/x64/sl.common.dll"
+        "${RT64_STREAMLINE_SDK_DIR}/bin/x64/sl.dlss.dll"
+        "${RT64_STREAMLINE_SDK_DIR}/bin/x64/nvngx_dlss.dll"
+        CACHE INTERNAL "Streamline DLLs an application using RT64 copies next to its executable")
+    foreach(dll ${RT64_STREAMLINE_RUNTIME_DLLS})
+        if (NOT EXISTS "${dll}")
+            message(FATAL_ERROR "RT64_ENABLE_DLSS: missing ${dll}")
+        endif()
+    endforeach()
+    message(STATUS "RT64: DLSS enabled, Streamline SDK at ${RT64_STREAMLINE_SDK_DIR}")
 endif()
 
 target_link_directories(rt64 PRIVATE ${PROJECT_SOURCE_DIR}/src/contrib/dxc)

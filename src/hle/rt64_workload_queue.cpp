@@ -5,6 +5,7 @@
 #include "rt64_workload_queue.h"
 
 #include "common/rt64_thread.h"
+#include "render/rt64_dlss_streamline.h"
 
 #include "rt64_present_queue.h"
 
@@ -206,6 +207,10 @@ namespace RT64 {
 
         uint32_t msaaSampleCount = ext.sharedResources->userConfig.msaaSampleCount();
 
+        // DLSS only runs when the build and the device support it and MSAA is off (its depth input must be single sampled).
+        workloadConfig.upscaler = ext.sharedResources->userConfig.upscaler;
+        workloadConfig.upscalerActive = (workloadConfig.upscaler != UserConfiguration::Upscaler::None) && (ext.dlss != nullptr) && ext.dlss->isSupported() && (msaaSampleCount <= 1);
+
         // Build the resolution scale vector from the configuration.
         workloadConfig.aspectRatioScale = workloadConfig.aspectRatioTarget / workloadConfig.aspectRatioSource;
         workloadConfig.resolutionScale = { resolutionMultiplier * workloadConfig.aspectRatioScale, resolutionMultiplier };
@@ -299,6 +304,12 @@ namespace RT64 {
         FramebufferManager &fbManager = ext.sharedResources->framebufferManager;
         RenderTargetManager &targetManager = ext.sharedResources->renderTargetManager;
         const bool usingMSAA = (targetManager.multisampling.sampleCount > 1);
+
+        // DLSS resources go away as soon as it is off; the GPU finished the previous frame before this point.
+        if (!workloadConfig.upscalerActive && (ext.dlss != nullptr)) {
+            ext.dlss->releaseResources();
+            dlssOutput.texture.reset();
+        }
 
         rendererCPUProfiler.start();
 
@@ -682,6 +693,50 @@ namespace RT64 {
                         motionVectorTarget->ensure(ext.workloadGraphicsWorker, fbStorage.colorTarget->width, fbStorage.colorTarget->height, fbStorage.depthTarget);
                         drawParams.motionVectors = motionVectorTarget.get();
                         drawParams.motionVectorsDebugView = debuggerRenderer.viewMotionVectors;
+
+                        // DLSS runs on the same pair, right after the motion vector pass.
+                        if (workloadConfig.upscalerActive && (ext.dlss != nullptr)) {
+                            const bool outputRecreated = dlssOutput.ensure(ext.device, fbStorage.colorTarget->width, fbStorage.colorTarget->height, fbStorage.colorTarget->format);
+
+                            // A camera cut means the history must not be reused: the main 3D projection could not be matched to the
+                            // previous frame, or its transform group asks to skip interpolating the camera this frame, which is how a
+                            // game marks a camera jump with the extended GBI (Majora's Mask does this on every cut).
+                            bool cameraCut = false;
+                            bool cameraUnmapped = false;
+                            bool cameraSkips = false;
+                            uint32_t cameraId = 0xFFFFFFFFu;
+                            uint32_t cameraComponents = 0;
+                            size_t cameraMapCount = 0;
+                            const int32_t mainProj = FramebufferRenderer::findMainPerspectiveProjection(fbPair);
+                            const uint32_t workloadIndex = curFrame.workloads[w];
+                            if ((mainProj >= 0) && prevFrame.matched && (workloadIndex < curFrame.frameMap.workloads.size())) {
+                                const DrawData &dd = workload.drawData;
+                                const uint32_t transformsIndex = fbPair.projections[mainProj].transformsIndex;
+                                const auto &viewProjMaps = curFrame.frameMap.workloads[workloadIndex].viewProjections;
+                                cameraMapCount = viewProjMaps.size();
+                                cameraUnmapped = (transformsIndex >= viewProjMaps.size()) || !viewProjMaps[transformsIndex].mapped;
+                                if ((transformsIndex < dd.viewProjTransformGroups.size()) && (dd.viewProjTransformGroups[transformsIndex] < dd.transformGroups.size())) {
+                                    const TransformGroup &group = dd.transformGroups[dd.viewProjTransformGroups[transformsIndex]];
+                                    const bool explicitId = (group.matrixId != G_EX_ID_AUTO) && (group.matrixId != G_EX_ID_IGNORE);
+                                    cameraSkips = explicitId && ((group.positionInterpolation == G_EX_COMPONENT_SKIP) || (group.rotationInterpolation == G_EX_COMPONENT_SKIP));
+                                    cameraId = group.matrixId;
+                                    cameraComponents = (uint32_t(group.positionInterpolation) << 24) | (uint32_t(group.rotationInterpolation) << 16) | (uint32_t(group.scaleInterpolation) << 8) | uint32_t(group.perspectiveInterpolation);
+                                }
+
+                                cameraCut = cameraUnmapped || cameraSkips;
+                            }
+
+                            drawParams.dlss = ext.dlss;
+                            drawParams.dlssOutput = dlssOutput.texture.get();
+                            drawParams.dlssMode = DLSSStreamline::modeFromConfiguration(workloadConfig.upscaler);
+                            // A workload frozen by the debugger re-renders the same frame with zero motion, so its history stays valid.
+                            const bool motionReset = !workload.paused && (mvState.reset || cameraCut);
+                            drawParams.dlssReset = outputRecreated || motionReset;
+                            if (drawParams.dlssReset && ext.sharedResources->userConfig.developerMode) {
+                                fprintf(stdout, "DLSS: history reset at frame %u (%s%s%s) pair %u main %d unmapped %d skips %d id 0x%X comps 0x%08X maps %zu.\n", framebufferRenderer->frameParams.frameCount, (mvState.reset && !workload.paused) ? "motion " : "", outputRecreated ? "output " : "", (cameraCut && !workload.paused) ? "camera " : "", f, mainProj, cameraUnmapped ? 1 : 0, cameraSkips ? 1 : 0, cameraId, cameraComponents, cameraMapCount);
+                                fflush(stdout);
+                            }
+                        }
                     }
 
                     framebufferRenderer->addFramebuffer(drawParams);
@@ -960,6 +1015,10 @@ namespace RT64 {
                 threadConfigurationUpdate(workload.viFbSize, workloadConfig);
                 workloadConfig.motionVectors = workload.debuggerRenderer.viewMotionVectors;
                 workloadConfig.jitter = workload.debuggerRenderer.forceJitter;
+
+                // DLSS needs both of its inputs whatever the debugger toggles say.
+                workloadConfig.motionVectors = workloadConfig.motionVectors || workloadConfig.upscalerActive;
+                workloadConfig.jitter = workloadConfig.jitter || workloadConfig.upscalerActive;
 
                 // FIXME: This is a very hacky way to find out if we need to advance the frame if the workload was paused for the first time.
                 if (!workload.paused || (!gameFrames[curFrameIndex].workloads.empty() && (gameFrames[curFrameIndex].workloads[0] != (uint32_t)processCursor))) {

@@ -77,6 +77,60 @@ inspector practical. Like F1-F4 they only work with `developerMode` on. F5/F7/F8
 them (quick-save, quick-load, UI debugger, fullscreen). F10 toggles the same `DebuggerInspector::paused` flag as the debugger
 tab's Pause button, which otherwise only reacts to F4 while that tab is open.
 
+### 2026-10-29 — Streamline is loaded at runtime, in manual hooking mode, with only the DXGI factory proxied
+`src/render/rt64_dlss_streamline.cpp` is the only file that includes a Streamline header; the build option `RT64_ENABLE_DLSS`
+turns into the private define `RT64_DLSS_ENABLED` on the rt64 target only, and the header (and `UserConfiguration::upscaler`)
+look the same in both builds, so an application linking RT64 never changes shape with the option. Nothing is linked:
+`sl.interposer.dll` is loaded from the executable's directory with `LoadLibrary` after `sl::security::verifyEmbeddedSignature`
+(NVIDIA's shipping requirement, and it rejects a tampered DLL), and every entry point comes from `GetProcAddress`. Streamline
+runs in manual hooking mode so plume stays untouched: `slInit` after the device exists (allowed on D3D12), `slSetD3DDevice`,
+`slIsFeatureSupported` with the adapter's LUID. Manual hooking still requires Streamline to see every Present for its per-frame
+bookkeeping, and the documented way is to create the swap chain through a Streamline factory proxy, so `attachDevice` swaps
+plume's `D3D12Interface::dxgiFactory` for the proxy before the swap chain exists; the proxy forwards everything else and plume
+releases it like the original. The DLL is never unloaded for that reason. Over the air updates are off (what ships is what
+runs; the NVIDIA driver's own global DLSS override can still substitute its copies, which is the user's choice). Streamline's
+log goes to RT64's data directory (`sl.log`). Any failure along the way only leaves the option reported as unavailable with
+a plain-language reason; rendering never depends on it.
+
+### 2026-10-29 — DLAA runs after the motion vector pass, into its own texture, copied back over the frame region
+DLSS evaluates on the same scene boundary the motion vector pass uses (after the last perspective projection that writes
+depth), so the HUD and all 2D content drawn afterwards land on top of the anti-aliased 3D frame untouched. The colour target
+cannot be the output (it is the input, and plume creates it without unordered access), so DLSS writes a texture of the same
+size and format (`DLSSStreamline::OutputTarget`, recreated on size or format change) and the frame region is copied back with
+`copyTextureRegion`. Inputs: the colour target, the single sampled `D32_FLOAT` depth (which is why DLSS is inactive under
+MSAA), the `R16G16_FLOAT` motion vectors in pixels (previous minus current, y down, `mvecScale = 1/size`), and the Phase 2
+jitter in pixels. The camera constants come from the *main* perspective projection (the one with the most depth-writing
+draws), not from the marker projection, because a frame can end its 3D content with a small secondary projection. RT64's
+matrices are row-major in the row vector convention, which is exactly what Streamline documents, so they are passed as
+stored (`cameraViewToClip` = the interpolated projection, `clipToPrevClip` = inverse(viewProj) x prevViewProj). The 16-bit
+UNORM targets the recomp uses by default are accepted by DLSS directly. After `slEvaluateFeature` the pass only invalidates
+plume's cached descriptor heap, topology and stencil state; the next raster scene re-binds everything else itself.
+
+### 2026-10-29 — History resets come from the camera's transform group and from gaps, not from the matrix ID alone
+Majora's Mask tags its camera with one constant ID and marks a cut by asking the extended GBI to *skip* interpolating the
+camera's position and rotation that frame, so `viewProjections[i].mapped` stays true across cuts. The reset rule is therefore:
+the main projection's group has an explicit ID and skips position or rotation interpolation, or the projection could not be
+matched at all, or the previous frame was not matched (the motion vector tracker's reset), or the previous displayed frame
+did not run DLSS (pause menu, no 3D content, first frame), or the output texture or mode changed. A frame frozen with the
+debugger's pause does *not* reset: it re-renders the same image with zero motion, which is exactly what a temporal filter
+wants, and it makes frozen-frame comparisons meaningful. The frame map is indexed by the workload's queue index, not by its
+position in the frame (a mistake that made every frame look like a cut until fixed).
+
+### 2026-10-29 — Streamline counts frames itself and the inputs are tagged "valid until evaluate"
+Passing RT64's own displayed-frame counter to `slGetNewFrameToken` and tagging the inputs as "only valid now" made
+Streamline's common plugin clone all four textures into a ring of frames every frame (and log that it cannot size 16-bit
+UNORM and D32 resources). The inputs are consumed by the evaluate call that immediately follows and reused by the renderer
+afterwards, so `eValidUntilEvaluate` is the truthful lifecycle; with it and Streamline's own present-based frame counting
+there are no copies. `slAllocateResources` is called when the options are set so the feature is created up front, and
+`slFreeResources` runs as soon as DLSS is turned off (the workload thread waits for the GPU every frame, so this is safe).
+
+### 2026-10-29 — The DLSS setting is generic; applications decide how it interacts with MSAA
+`UserConfiguration::upscaler` is a plain enum with JSON, default `None`; `WorkloadConfiguration::upscalerActive` is true only
+when the build and the device support DLSS and MSAA is off. RT64 does not force MSAA off itself because changing the sample
+count rebuilds the ubershaders through `Application::updateMultisampling`, which the embedding application drives; the
+inspector shows a note instead and Zelda64Recomp's menu turns MSAA off when DLSS is chosen. The F12 developer shortcut toggles
+DLAA through the same configuration update a menu uses, for testing without one.
+
 ### 2026-10-27 — Add a GPU preference setting
 plume picks the D3D12 adapter with the most VRAM, which on a two-GPU machine can be the slower
 card or one not driving the monitor. `UserConfiguration::deviceName` (empty = unchanged behaviour)

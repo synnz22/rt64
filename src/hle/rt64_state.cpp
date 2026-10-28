@@ -2141,6 +2141,22 @@ namespace RT64 {
 
                     ImGui::EndDisabled();
 
+                    // DLSS (NVIDIA Streamline). Greyed out when the build or the device can't do it, with the reason next to it.
+                    {
+                        const DLSSStreamline *dlss = ext.app->dlss.get();
+                        const bool dlssSupported = (dlss != nullptr) && dlss->isSupported();
+                        ImGui::BeginDisabled(!dlssSupported);
+                        genConfigChanged = ImGui::Combo("DLSS", reinterpret_cast<int *>(&userConfig.upscaler), "Off\0DLAA\0Quality\0Balanced\0Performance\0") || genConfigChanged;
+                        ImGui::EndDisabled();
+                        if (!dlssSupported) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("(%s)", (dlss != nullptr) ? dlss->getStatus().message.c_str() : "unavailable");
+                        }
+                        else if ((userConfig.upscaler != UserConfiguration::Upscaler::None) && (userConfig.msaaSampleCount() > 1)) {
+                            ImGui::TextDisabled("DLSS is inactive while MSAA is on.");
+                        }
+                    }
+
                     genConfigChanged = ImGui::Combo("Filtering", reinterpret_cast<int *>(&userConfig.filtering), "Nearest\0Linear\0Pixel Scaling\0") || genConfigChanged;
 
                     resConfigChanged = ImGui::Combo("Aspect Ratio Mode", reinterpret_cast<int *>(&userConfig.aspectRatio), "Original\0Expand\0Manual\0") || resConfigChanged;

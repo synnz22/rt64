@@ -18,6 +18,7 @@
 
 #include "rt64_buffer_uploader.h"
 #include "rt64_descriptor_sets.h"
+#include "rt64_dlss_streamline.h"
 #include "rt64_framebuffer_renderer_call.h"
 #include "rt64_motion_vectors.h"
 #include "rt64_raster_shader_cache.h"
@@ -106,6 +107,8 @@ namespace RT64 {
         std::unique_ptr<RSPVertexTestZDescriptorSet> vertexTestZSet;
         interop::FrameParams frameParams;
         const ShaderLibrary *shaderLibrary = nullptr;
+        uint32_t lastUpscaledFrame = 0;
+        bool upscaledBefore = false;
 
 #   if RT_ENABLED
         const RenderTexture *blueNoiseTexture = nullptr;
@@ -125,6 +128,15 @@ namespace RT64 {
             interop::float2 fbResolution = { 0.0f, 0.0f };
             MotionVectorTarget *motionVectors = nullptr;
             bool motionVectorsDebugView = false;
+            interop::float2 jitterPixels = { 0.0f, 0.0f };
+            DLSSStreamline *dlss = nullptr;
+            RenderTexture *dlssOutput = nullptr;
+            DLSSStreamline::Mode dlssMode = DLSSStreamline::Mode::DLAA;
+            bool dlssReset = false;
+            interop::float4x4 dlssViewToClip = interop::float4x4::identity();
+            interop::float4x4 dlssWorldToView = interop::float4x4::identity();
+            interop::float4x4 dlssViewProj = interop::float4x4::identity();
+            interop::float4x4 dlssPrevViewProj = interop::float4x4::identity();
         };
 
         std::vector<Framebuffer> framebufferVector;
@@ -158,6 +170,10 @@ namespace RT64 {
             interop::float2 jitterPixels = { 0.0f, 0.0f };
             MotionVectorTarget *motionVectors = nullptr;
             bool motionVectorsDebugView = false;
+            DLSSStreamline *dlss = nullptr;
+            RenderTexture *dlssOutput = nullptr;
+            DLSSStreamline::Mode dlssMode = DLSSStreamline::Mode::DLAA;
+            bool dlssReset = false;
         };
 
         FramebufferRenderer(RenderWorker *worker, bool rtSupport, UserConfiguration::GraphicsAPI graphicsAPI, const ShaderLibrary *shaderLibrary);
@@ -177,6 +193,9 @@ namespace RT64 {
         bool submitDepthAccess(RenderWorker *worker, RenderFramebufferStorage *fbStorage, bool readOnly, bool &depthState);
         void submitRasterScene(RenderWorker *worker, const Framebuffer &framebuffer, RenderFramebufferStorage *fbStorage, const RasterScene &rasterScene, bool &depthState);
         void submitMotionVectors(RenderWorker *worker, const Framebuffer &framebuffer, RenderFramebufferStorage *fbStorage, const RasterScene &rasterScene, bool &depthState);
+        void submitUpscaler(RenderWorker *worker, const Framebuffer &framebuffer, RenderFramebufferStorage *fbStorage, bool &depthState);
+        static int32_t findMotionVectorProjection(const FramebufferPair &fbPair);
+        static int32_t findMainPerspectiveProjection(const FramebufferPair &fbPair);
         void addFramebuffer(const DrawParams &p);
         void endFramebuffers(RenderWorker *worker, const DrawBuffers *drawBuffers, const OutputBuffers *outputBuffers, bool rtEnabled);
         void recordSetup(RenderWorker *worker, std::vector<BufferUploader *> bufferUploaders, RSPProcessor *rspProcessor, VertexProcessor *vertexProcessor, const OutputBuffers *outputBuffers, bool rtEnabled);

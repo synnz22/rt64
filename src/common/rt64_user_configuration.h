@@ -90,6 +90,17 @@ namespace RT64 {
             OptionCount
         };
 
+        // Temporal upscaler for the high resolution renderer. DLAA keeps the render size and only anti-aliases; the DLSS
+        // modes render smaller and upscale. Needs a build with RT64_ENABLE_DLSS and a supported GPU, otherwise it's ignored.
+        enum class Upscaler {
+            None,
+            DLAA,
+            DLSSQuality,
+            DLSSBalanced,
+            DLSSPerformance,
+            OptionCount
+        };
+
         GraphicsAPI graphicsAPI;
         Resolution resolution;
         DisplayBuffering displayBuffering;
@@ -111,6 +122,7 @@ namespace RT64 {
         bool idleWorkActive;
         bool developerMode;
         std::string deviceName;
+        Upscaler upscaler;
 
         UserConfiguration();
         void validate();
@@ -183,6 +195,14 @@ namespace RT64 {
         { UserConfiguration::PresentWait::Disabled, "Disabled" },
         { UserConfiguration::PresentWait::Enabled, "Enabled" },
         { UserConfiguration::PresentWait::Automatic, "Automatic" }
+    });
+
+    NLOHMANN_JSON_SERIALIZE_ENUM(UserConfiguration::Upscaler, {
+        { UserConfiguration::Upscaler::None, "None" },
+        { UserConfiguration::Upscaler::DLAA, "DLAA" },
+        { UserConfiguration::Upscaler::DLSSQuality, "DLSSQuality" },
+        { UserConfiguration::Upscaler::DLSSBalanced, "DLSSBalanced" },
+        { UserConfiguration::Upscaler::DLSSPerformance, "DLSSPerformance" }
     });
 
     struct ConfigurationJSON {

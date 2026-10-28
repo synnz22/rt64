@@ -3,6 +3,32 @@
 All notable changes on this branch. Newest first. Upstream RT64 has no version number; this branch
 starts at 0.1.0.
 
+## [0.4.0] - 2026-10-29
+
+### Added
+- NVIDIA DLSS through the Streamline SDK, DLAA mode (Phase 3 of the DLSS plan): the 3D scene is anti-aliased by DLSS at full
+  resolution, before the HUD and 2D elements are drawn, so those stay pixel exact. Build option `RT64_ENABLE_DLSS` (off by
+  default) plus `RT64_STREAMLINE_SDK_DIR`; `sl.interposer.dll` is loaded at runtime from the executable's directory after its
+  NVIDIA signature is verified, so a build with the option on still runs without the DLLs or on non-RTX GPUs (the option
+  then reports why it is unavailable). D3D12 only for now.
+- `upscaler` setting (`None`, `DLAA`, `DLSSQuality`, `DLSSBalanced`, `DLSSPerformance`; JSON key `upscaler`), always present
+  in the configuration whatever the build. A "DLSS" combo in the inspector's configuration tab (greyed out with the reason
+  when unavailable) and the F12 developer shortcut toggle DLAA at runtime without restarting.
+- DLSS history resets on camera cuts (a camera whose transform group skips interpolation, or that could not be matched to
+  the previous frame), when the previous displayed frame did not go through DLSS (pause menu, scene without 3D content),
+  and when the mode or output size changes.
+- `DynamicLibraries::moduleDirectory()` helper (the executable's directory).
+
+### Changed
+- Nothing in the output when the upscaler is `None`: the native renderer and the high resolution renderer are untouched
+  unless DLSS is active. DLSS is inactive while MSAA is on (its depth input must be single sampled); the application decides
+  how to resolve that (Zelda64Recomp turns MSAA off when DLSS is selected).
+
+### Known limitations
+- The scaling modes (Quality / Balanced / Performance) are accepted by the setting but render at full resolution like DLAA
+  until the lower internal render size is implemented (next checkpoint).
+- Vulkan: DLSS reports itself unavailable (needs a plume change to inject Streamline's device extensions and queues).
+
 ## [0.3.0] - 2026-10-28
 
 ### Added

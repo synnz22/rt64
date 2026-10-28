@@ -1,6 +1,6 @@
 # DLAA / DLSS Super Resolution for RT64 (Zelda64Recomp, Majora's Mask)
 
-Status: **Phases 0-2 complete (2026-10-27/28).** Phase 3 (Streamline / DLSS) not started; it needs the SDK at `K:\Git\MM\sdk\streamline\`. Each phase ends at a
+Status: **Phases 0-3 (DLAA) complete (2026-10-27/29).** Phase 3's scaling modes checkpoint and Phase 4 not started. The SDK is unpacked at `K:\Git\MM\sdk\streamline-sdk-v2.14.16\` (configure with `-DRT64_ENABLE_DLSS=ON -DRT64_STREAMLINE_SDK_DIR=K:/Git/MM/sdk/streamline-sdk-v2.14.16`). Each phase ends at a
 CHECKPOINT; nothing past a checkpoint starts without sign-off.
 
 Branch: `synnz22/rt64` → `dlss-integration`, based on upstream rt64 `main` d9817c6 (2026-10-23).
@@ -335,10 +335,33 @@ hard to do generically.
   texture resampling) with larger differences only along edges, and two jittered frames differ from each other (38%, different
   phases). The difference mask covers only the 3D content; the letterbox bars are untouched. With both the motion vector view and
   jitter on, the vectors look the same as without jitter. Screenshots and masks: `docs/phase2/`.
+- Phase 3, DLAA (2026-10-29): implemented per section 7 with these deviations. (1) `slInit` runs after the D3D12 device exists
+  (manual hooking allows it on D3D12), and plume's `IDXGIFactory4*` is swapped for Streamline's proxy before the swap chain is
+  created so Streamline sees every Present; nothing else in plume is touched. (2) The output texture (`DLSSStreamline::OutputTarget`,
+  same size and format as the colour target, unordered access) is owned by the workload queue and copied back as a region.
+  (3) Camera constants come from the *main* perspective projection (most depth-writing draws), not the marker projection.
+  (4) The cut signal is the camera transform group asking to skip position/rotation interpolation: Majora's Mask keeps
+  `CAMERA_TRANSFORM_ID` constant across cuts, so `mapped` never goes false there (the plan assumed the ID changes). (5) A frame
+  frozen by the debugger keeps its history (zero motion, same image). (6) Streamline counts frames itself and the inputs are
+  tagged `eValidUntilEvaluate`: handing it RT64's frame counter with `eOnlyValidNow` tags made it clone all four textures into
+  a 16-frame ring every frame and log 64 "don't know the size" errors. (7) F12 toggles DLAA and the inspector has a DLSS combo.
+  (8) The recomp menu shows Off / DLAA only until the scaling modes exist. Verified on the title demo (1600x960 window, MSAA off,
+  D3D12, RTX 4080, driver 621.01, Streamline 2.14.16; the NVIDIA driver's global DLSS override is on and substitutes its own
+  copies of the same version): `sl.log` shows DLSS supported, the DLSS context created at 1600x960 (DLAA optimal 1600x960,
+  min 1584x950) and no errors; on a frame frozen with F10, DLAA on vs off changes 28.2% of the pixels (mean 2.1 levels, large
+  differences only along edges), two DLAA captures of the same frozen frame differ on 7.3% of pixels by at most 12 levels, two
+  captures with DLAA off are bit-identical, and the 4x zoomed crops show stair-stepped edges replaced by smooth ones with
+  textures unchanged; the difference mask covers only the 3D content. History resets in a 15 s stretch of the demo: two when
+  the output texture was created (each enable) and the three displayed frames of the demo's one camera cut, none otherwise
+  (an earlier build reset every frame because the frame map was indexed by the frame-local workload number instead of the
+  queue index). Clean DLSS context release on disable and clean `slShutdown` at exit. Images: `docs/phase3/`. Not covered:
+  in-game play with the HUD (title demo only, needs a save), frame-time measurement, HFR at 120 Hz, Vulkan, the scaling modes.
 - Testing notes: the recomp starts straight into the game when a ROM is configured; keys sent with simulated input never reach it
   from a background script (Windows blocks foreground changes), but `PostMessage(WM_KEYDOWN)` to the game window does, and goes
   through the same RT64 filter as real key presses. The game prints nothing to a redirected stdout until a normal exit.
-  Posted mouse clicks only hover ImGui widgets, which is why F10 exists. The PC rebooted unexpectedly a few minutes after the
+  Posted mouse clicks only hover ImGui and RmlUi widgets, which is why F10 exists. `PrintWindow(PW_RENDERFULLCONTENT)`
+  captures the game while the desktop is locked (used for all Phase 3 captures); the recomp ignores `WM_CLOSE` once in-game,
+  so a kill ends test runs and the developer-mode DLSS lines flush stdout themselves. The PC rebooted unexpectedly a few minutes after the
   last Phase 2 run (game already closed, no crash dump, no GPU watchdog or hardware error record, an unrelated crash dump from
   six days earlier exists); nothing links it to these changes, but it is noted here in case it recurs.
 

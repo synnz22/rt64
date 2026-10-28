@@ -20,6 +20,7 @@
 #include "preset/rt64_preset_scene.h"
 #include "render/rt64_render_worker.h"
 #include "render/rt64_shader_library.h"
+#include "render/rt64_dlss_streamline.h"
 #include "plume_render_interface.h"
 
 #include "rt64_application_window.h"
@@ -58,7 +59,8 @@ namespace RT64 {
             Replacements,
             MotionVectors,
             Jitter,
-            Pause
+            Pause,
+            Upscaler
         };
 
         struct Core {
@@ -136,6 +138,7 @@ namespace RT64 {
         std::unique_ptr<PresentQueue> presentQueue;
         std::unique_ptr<SharedQueueResources> sharedQueueResources;
         std::unique_ptr<RenderInterface> renderInterface;
+        std::unique_ptr<DLSSStreamline> dlss;
         std::atomic<bool> debuggerPaused;
         uint64_t frameCounter;
         uint32_t threadsAvailable;
@@ -175,5 +178,6 @@ namespace RT64 {
         void updateEmulatorConfig();
         void updateEnhancementConfig();
         void setFullScreen(bool fullscreen);
+        bool isDLSSSupported() const;
     };
 };

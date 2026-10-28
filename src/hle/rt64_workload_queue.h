@@ -9,6 +9,7 @@
 #include "common/rt64_enhancement_configuration.h"
 #include "common/rt64_profiling_timer.h"
 #include "common/rt64_user_configuration.h"
+#include "render/rt64_dlss_streamline.h"
 #include "render/rt64_framebuffer_renderer.h"
 #include "render/rt64_projection_processor.h"
 #include "render/rt64_raster_shader_cache.h"
@@ -41,6 +42,7 @@ namespace RT64 {
             TextureCache *textureCache = nullptr;
             const ShaderLibrary *shaderLibrary = nullptr;
             UserConfiguration::GraphicsAPI createdGraphicsAPI = UserConfiguration::GraphicsAPI::OptionCount;
+            DLSSStreamline *dlss = nullptr;
 #       if RT_ENABLED
             const RenderTexture *blueNoiseTexture = nullptr;
             RaytracingShaderCache *rtShaderCache = nullptr;
@@ -60,6 +62,8 @@ namespace RT64 {
             bool postBlendNoiseNegative = false;
             bool motionVectors = false;
             bool jitter = false;
+            UserConfiguration::Upscaler upscaler = UserConfiguration::Upscaler::None;
+            bool upscalerActive = false;
         };
 
         // Per rendered frame: which previous frame the motion vectors are relative to.
@@ -111,6 +115,7 @@ namespace RT64 {
         MotionVectorState mvState;
         std::unique_ptr<MotionVectorTarget> motionVectorTarget;
         hlslpp::float2 jitterPixels = 0.0f;
+        DLSSStreamline::OutputTarget dlssOutput;
 
         WorkloadQueue();
         ~WorkloadQueue();

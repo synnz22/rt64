@@ -31,6 +31,7 @@ namespace RT64 {
         j["idleWorkActive"] = cfg.idleWorkActive;
         j["developerMode"] = cfg.developerMode;
         j["deviceName"] = cfg.deviceName;
+        j["upscaler"] = cfg.upscaler;
     }
 
     void from_json(const json &j, UserConfiguration &cfg) {
@@ -56,6 +57,7 @@ namespace RT64 {
         cfg.idleWorkActive = j.value("idleWorkActive", defaultCfg.idleWorkActive);
         cfg.developerMode = j.value("developerMode", defaultCfg.developerMode);
         cfg.deviceName = j.value("deviceName", defaultCfg.deviceName);
+        cfg.upscaler = j.value("upscaler", defaultCfg.upscaler);
     }
 
     template <typename T>
@@ -89,6 +91,7 @@ namespace RT64 {
         idleWorkActive = true;
         developerMode = false;
         deviceName = "";
+        upscaler = Upscaler::None;
     }
 
     void UserConfiguration::validate() {
@@ -104,6 +107,7 @@ namespace RT64 {
         clampEnum<InternalColorFormat>(internalColorFormat);
         clampEnum<HardwareResolve>(hardwareResolve);
         clampEnum<PresentWait>(presentWait);
+        clampEnum<Upscaler>(upscaler);
         resolutionMultiplier = std::clamp<double>(resolutionMultiplier, 0.0f, ResolutionMultiplierLimit);
         downsampleMultiplier = std::clamp<int>(downsampleMultiplier, 1, ResolutionMultiplierLimit);
         aspectTarget = std::clamp<double>(aspectTarget, 0.1f, 100.0f);

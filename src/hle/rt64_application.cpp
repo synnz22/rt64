@@ -288,6 +288,26 @@ namespace RT64 {
             deviceDescription = device->getDescription();
         }
 
+        // NVIDIA DLSS through Streamline (optional, D3D12 only). Any failure here only leaves the DLSS option unavailable;
+        // rendering never depends on it. This must happen before the swap chain exists (see DLSSStreamline::attachDevice).
+        dlss = std::make_unique<DLSSStreamline>();
+        if (DLSSStreamline::isCompiledIn()) {
+            std::filesystem::path dlssLogDirectory;
+            if (!userPaths.isEmpty() && checkDirectoryCreated(userPaths.dataPath)) {
+                dlssLogDirectory = userPaths.dataPath;
+            }
+
+            if (dlss->initialize(dlssLogDirectory) && dlss->attachDevice(renderInterface.get(), device.get(), chosenGraphicsAPI)) {
+                fprintf(stdout, "DLSS: supported on this device.\n");
+            }
+            else {
+                fprintf(stdout, "DLSS: unavailable, %s.\n", dlss->getStatus().message.c_str());
+                dlss->shutdown();
+            }
+
+            fflush(stdout);
+        }
+
         // Detect if the application should use HDR framebuffers or not.
         bool usesHDR;
         switch (userConfig.internalColorFormat) {
@@ -440,6 +460,7 @@ namespace RT64 {
         workloadExt.textureCache = textureCache.get();
         workloadExt.shaderLibrary = shaderLibrary.get();
         workloadExt.createdGraphicsAPI = chosenGraphicsAPI;
+        workloadExt.dlss = dlss.get();
 #   if RT_ENABLED
         workloadExt.rtShaderCache = rtShaderCache.get();
         workloadExt.blueNoiseTexture = blueNoiseTexture.texture.get();
@@ -619,6 +640,9 @@ namespace RT64 {
             case VK_F10:
                 processDeveloperShortcut(DeveloperShortcut::Pause);
                 return true;
+            case VK_F12:
+                processDeveloperShortcut(DeveloperShortcut::Upscaler);
+                return true;
             default:
                 // Unknown shortcut.
                 break;
@@ -660,6 +684,9 @@ namespace RT64 {
                 return true;
             case SDL_SCANCODE_F10:
                 processDeveloperShortcut(DeveloperShortcut::Pause);
+                return true;
+            case SDL_SCANCODE_F12:
+                processDeveloperShortcut(DeveloperShortcut::Upscaler);
                 return true;
             default:
                 // Don't filter the key event.
@@ -736,6 +763,23 @@ namespace RT64 {
 
             break;
         }
+        case DeveloperShortcut::Upscaler: {
+            // Toggles DLAA without a menu, for testing. Same path a menu takes: a configuration update.
+            if (userConfig.developerMode) {
+                if (!isDLSSSupported()) {
+                    fprintf(stdout, "DLSS is not available: %s.\n", (dlss != nullptr) ? dlss->getStatus().message.c_str() : "not built in");
+                }
+                else {
+                    const bool enable = (userConfig.upscaler == UserConfiguration::Upscaler::None);
+                    userConfig.upscaler = enable ? UserConfiguration::Upscaler::DLAA : UserConfiguration::Upscaler::None;
+                    updateUserConfig(false);
+                    fprintf(stdout, "DLSS %s.\n", enable ? "DLAA enabled" : "disabled");
+                    fflush(stdout);
+                }
+            }
+
+            break;
+        }
         default:
             break;
         };
@@ -775,6 +819,12 @@ namespace RT64 {
         textureDirectWorker.reset();
         textureCopyWorker.reset();
         swapChain.reset();
+
+        // Streamline is released after the swap chain it proxied and before the device and its queues.
+        if (dlss != nullptr) {
+            dlss->shutdown();
+        }
+
         workloadGraphicsWorker.reset();
         presentGraphicsWorker.reset();
         shaderLibrary.reset();
@@ -815,6 +865,10 @@ namespace RT64 {
     bool Application::checkDirectoryCreated(const std::filesystem::path &path) {
         std::filesystem::path dirPath(path);
         return std::filesystem::is_directory(dirPath) || std::filesystem::create_directories(dirPath);
+    }
+
+    bool Application::isDLSSSupported() const {
+        return (dlss != nullptr) && dlss->isSupported();
     }
 
     void Application::updateUserConfig(bool discardFBs) {
