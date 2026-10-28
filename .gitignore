@@ -24,3 +24,12 @@ build/
 .idea
 cmake-build-debug*
 .DS_Store
+
+# DLSS branch: never commit SDKs, ROMs, or NVIDIA binaries
+sdk/
+*.z64
+*.n64
+*.v64
+*.elf
+nvngx_*.dll
+sl.*.dll

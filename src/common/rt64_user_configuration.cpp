@@ -30,6 +30,7 @@ namespace RT64 {
         j["presentWait"] = cfg.presentWait;
         j["idleWorkActive"] = cfg.idleWorkActive;
         j["developerMode"] = cfg.developerMode;
+        j["deviceName"] = cfg.deviceName;
     }
 
     void from_json(const json &j, UserConfiguration &cfg) {
@@ -54,6 +55,7 @@ namespace RT64 {
         cfg.presentWait = j.value("presentWait", defaultCfg.presentWait);
         cfg.idleWorkActive = j.value("idleWorkActive", defaultCfg.idleWorkActive);
         cfg.developerMode = j.value("developerMode", defaultCfg.developerMode);
+        cfg.deviceName = j.value("deviceName", defaultCfg.deviceName);
     }
 
     template <typename T>
@@ -86,6 +88,7 @@ namespace RT64 {
         presentWait = PresentWait::Automatic;
         idleWorkActive = true;
         developerMode = false;
+        deviceName = "";
     }
 
     void UserConfiguration::validate() {

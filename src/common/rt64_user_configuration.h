@@ -110,6 +110,7 @@ namespace RT64 {
         PresentWait presentWait;
         bool idleWorkActive;
         bool developerMode;
+        std::string deviceName;
 
         UserConfiguration();
         void validate();

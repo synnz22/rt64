@@ -183,7 +183,7 @@ namespace RT64 {
 
             if (renderInterface != nullptr) {
                 // Create the render device.
-                device = renderInterface->createDevice();
+                device = renderInterface->createDevice(userConfig.deviceName);
             }
         }
 
@@ -279,7 +279,7 @@ namespace RT64 {
 
             chosenGraphicsAPI = UserConfiguration::GraphicsAPI::Vulkan;
 
-            device = renderInterface->createDevice();
+            device = renderInterface->createDevice(userConfig.deviceName);
             if (device == nullptr) {
                 fprintf(stderr, "Unable to find compatible graphics device.\n");
                 return SetupResult::GraphicsDeviceNotFound;
